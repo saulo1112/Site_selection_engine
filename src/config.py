@@ -205,3 +205,63 @@ COMPLEMENTARIO_RULES = [
     ("parada_bus", "highway", {"bus_stop"}),
     ("banco_atm", "amenity", {"bank", "atm"}),
 ]
+
+
+# =========================================================================== #
+#  MODELO v1 — MCDA baseline (scoring ponderado, sin ML)
+#  (metodologia en docs/metodologia.md §4; resultados en docs/v1_mcda_resultados.md)
+# =========================================================================== #
+
+# --- Rutas de salida de v1 ---
+MCDA_RANKING_PARQUET_PATH = DATA_PROCESSED / "mcda_ranking.parquet"
+MCDA_RANKING_CSV_PATH = DATA_PROCESSED / "mcda_ranking.csv"
+MCDA_SUMMARY_PATH = DOCS / "v1_mcda_resultados.md"
+
+# --- Evaluacion honesta (post-hoc) ---
+# K para las metricas de ranking (NDCG@K, top-K hitting, top-K loss). ~5.5% del grid,
+# comparable al ratio de positivos observado, para que "elegir K celdas" sea realista.
+TOP_K = 200
+
+# --- Features derivadas de D1 (LEAKAGE) — EXCLUIDAS del score MCDA ---
+# La etiqueta `tiene_d1 = (n_d1_300m >= 1)` es funcion directa de estas columnas.
+# Usarlas como insumo del score seria leakage tautologico (igual que en v2/v3).
+# Se mantiene sincronizada con D1_DERIVED_COLS en src/features.py.
+MCDA_LEAKAGE_COLS = ["n_d1_300m", "n_d1_500m", "dist_d1_km"]
+
+# --- Pesos a priori del MCDA, por grupo de variables ---
+# Definidos por razonamiento de negocio (NO ajustados a la etiqueta — eso seria ML).
+#   - competencia (no-D1): zona retail activa = buena senal de viabilidad comercial.
+#   - complementarios: proxy de flujo peatonal / actividad urbana.
+#   - accesibilidad_vial: facilidad de llegada / visibilidad.
+#   - demografia: tamano de mercado local (nula si el censo no esta cargado;
+#     en ese caso su peso se reparte proporcionalmente entre los grupos presentes).
+# Cada feature lleva una direccion: +1 (mas es mejor) o -1 (se invierte tras normalizar,
+# p.ej. distancias: mas cerca es mejor).
+MCDA_GROUP_WEIGHTS = {
+    "competencia": 0.35,
+    "complementarios": 0.35,
+    "accesibilidad_vial": 0.15,
+    "demografia": 0.15,
+}
+
+# Features que componen cada grupo, con su direccion (+1 mejor-mas, -1 mejor-menos).
+# Dentro de cada grupo el peso del grupo se reparte uniforme entre sus features.
+MCDA_GROUP_FEATURES = {
+    "competencia": [
+        ("n_supermercados_500m", +1),   # mas supermercados (no-D1) = zona retail activa
+        ("dist_supermercado_km", -1),   # mas cerca de retail = mejor
+    ],
+    "complementarios": [
+        ("n_farmacias_500m", +1),
+        ("n_colegios_500m", +1),
+        ("n_paradas_bus_500m", +1),
+        ("n_bancos_atm_500m", +1),
+    ],
+    "accesibilidad_vial": [
+        ("densidad_vial", +1),
+    ],
+    "demografia": [
+        ("poblacion_estimada", +1),
+        ("viviendas_estimadas", +1),
+    ],
+}

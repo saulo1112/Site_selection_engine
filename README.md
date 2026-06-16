@@ -53,8 +53,10 @@ FastAPI, dashboard, Docker, README y docs de metodología completos):
   - **C**: híbrido FastAPI ligero + Kepler.gl/deck.gl.
 - **Pipeline de datos (ETAPAS 1-4): IMPLEMENTADO.** Descarga OSM → grid H3 → PostGIS
   → tabla de features (`data/processed/features.parquet`). Ver abajo.
-- **Modelos (v1/v2/v3): aún no implementados.** Esta fase entregó la tabla de features
-  lista para modelado.
+- **Modelo v1 (MCDA baseline): IMPLEMENTADO.** Score ponderado interpretable, sin ML
+  (`src/mcda.py`). NDCG@200=0.85, Precision@200=0.82, excluyendo features con leakage de
+  D1. Ver [docs/v1_mcda_resultados.md](docs/v1_mcda_resultados.md).
+- **Modelos v2/v3 (look-alike + spatial CV): aún no implementados.**
 
 ## Estructura del repo
 
@@ -68,10 +70,13 @@ src/
   db.py                        # ETAPA 3 — carga a PostGIS con indices GIST
   load_censo.py                # ETAPA 3 (opc.) — adquisicion del censo DANE
   features.py                  # ETAPA 4 — tabla de features (SQL espacial)
+  metrics.py                   # metricas de ranking (NDCG, top-K) reutilizables v1-v3
+  mcda.py                      # MODELO v1 — MCDA baseline (scoring ponderado, sin ML)
 docs/
   seleccion_area_estudio.md    # chequeo data-driven de ciudad (Overpass + DANE)
   metodologia.md               # objetivo, comparación con Lu et al., plan v1-v3
   features_summary.md          # balance de etiqueta, estadisticas y correlaciones
+  v1_mcda_resultados.md        # pesos, anti-leakage y metricas del MCDA baseline
 data/
   raw/                         # OSM crudo: boundary, POIs, red vial (no versionado)
   processed/                   # grid_bogota.geojson, features.parquet (no versionado)
@@ -92,6 +97,9 @@ uv run python -m src.download    # ETAPA 1: OSM -> data/raw/
 uv run python -m src.grid        # ETAPA 2: grid H3 -> data/processed/grid_bogota.geojson
 uv run python -m src.db          # ETAPA 3: carga a PostGIS (+ indices GIST)
 uv run python -m src.features    # ETAPA 4: -> data/processed/features.parquet (+ .csv)
+
+# 3. Modelo v1 — MCDA baseline (no requiere PostGIS; opera sobre features.parquet)
+uv run python -m src.mcda        # v1: -> data/processed/mcda_ranking.parquet (+ .csv)
 ```
 
 La conexión a PostGIS se lee de `DATABASE_URL` (default

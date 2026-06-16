@@ -79,10 +79,22 @@ modelo final sino **por qué** cada versión fue insuficiente.
 
 ### v1 — MCDA baseline (sin ML)
 - **Qué.** *Multi-Criteria Decision Analysis*: score ponderado de variables normalizadas
-  (densidad de competencia, demografía, accesibilidad), pesos definidos a priori.
+  (min-max), pesos a priori por grupo (competencia 41%, complementarios 41%,
+  accesibilidad vial 18% tras renormalizar — la demografía quedó fuera porque el censo
+  no está cargado). Implementado en `src/mcda.py`; métricas reutilizables en
+  `src/metrics.py`.
 - **Por qué primero.** Línea base interpretable y barata; referencia contra la cual medir
   si el ML aporta algo.
-- **Resultados.** _(pendiente)_
+- **Anti-leakage.** Las features derivadas de D1 (`n_d1_300m`, `n_d1_500m`, `dist_d1_km`)
+  se **excluyen del score** (la etiqueta `tiene_d1` es función directa de ellas). La
+  etiqueta solo se usa como validación post-hoc, nunca como insumo.
+- **Resultados** (ver [v1_mcda_resultados.md](v1_mcda_resultados.md)). Evaluación honesta
+  sobre los 3589 hexágonos, K=200:
+  - **NDCG@200 = 0.8495**, **Precision@200 = 0.820** (164 de las 200 celdas mejor
+    rankeadas ya tienen D1), **top-200 hitting = 0.1866** (techo 0.2275, pues hay 879
+    positivos ≫ K=200).
+  - Lectura: un baseline sin ML ordena bien las celdas más parecidas a las de D1. v2/v3
+    deberán superarlo —o, en v3, revelar cuánto de esto se sostiene sin leakage espacial.
 
 ### v2 — Clasificador look-alike naïve
 - **Qué.** Clasificador (¿la celda "se parece" a donde hay D1?) con split train/test
