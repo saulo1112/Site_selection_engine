@@ -6,7 +6,7 @@ Descarga, de forma idempotente y con reintentos, las capas base del pipeline:
   1c. Red vial (osmnx, network_type=drive) -> data/raw/bogota_streets.graphml
 
 Ejecutar de forma independiente:
-    uv run python -m src.download
+    uv run python -m src.data.download
 """
 
 from __future__ import annotations

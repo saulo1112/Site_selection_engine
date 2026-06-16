@@ -54,29 +54,47 @@ FastAPI, dashboard, Docker, README y docs de metodología completos):
 - **Pipeline de datos (ETAPAS 1-4): IMPLEMENTADO.** Descarga OSM → grid H3 → PostGIS
   → tabla de features (`data/processed/features.parquet`). Ver abajo.
 - **Modelo v1 (MCDA baseline): IMPLEMENTADO.** Score ponderado interpretable, sin ML
-  (`src/mcda.py`). NDCG@200=0.85, Precision@200=0.82, excluyendo features con leakage de
-  D1. Ver [docs/v1_mcda_resultados.md](docs/v1_mcda_resultados.md).
-- **Modelos v2/v3 (look-alike + spatial CV): aún no implementados.**
+  (`src/models/mcda.py`). NDCG@200=0.80, Precision@200=0.77. Ver
+  [docs/v1_mcda_resultados.md](docs/v1_mcda_resultados.md).
+- **Modelo v2 (clasificador look-alike, Regresión Logística): IMPLEMENTADO.**
+  (`src/models/lookalike.py`). Predice `P(tiene_d1=1)`; ROC-AUC=0.78, NDCG@200=0.83. Ver
+  [docs/v2_lookalike_resultados.md](docs/v2_lookalike_resultados.md).
+- **Modelo v3 (mismo modelo con Spatial CV): IMPLEMENTADO.**
+  (`src/models/lookalike_v3.py` + `src/models/spatial_cv.py`). Validación cruzada espacial
+  (bloques H3 res-6, 5 folds, buffer 1 anillo) → métricas honestas out-of-fold:
+  ROC-AUC=0.79, NDCG@200=0.84. **Hallazgo:** el desempeño NO cayó vs v2 → el leakage
+  espacial era menor de lo esperado (la señal no-D1 generaliza). Ver
+  [docs/v3_spatial_cv_resultados.md](docs/v3_spatial_cv_resultados.md).
+- **Iteración honesta de leakage.** Se detectó y corrigió un leakage de features (D1 como
+  su propio "competidor"); y se midió —sin forzar la narrativa— que el leakage espacial era
+  bajo. Ver [docs/metodologia.md](docs/metodologia.md) §6.
 
 ## Estructura del repo
 
 ```
 src/
-  config.py                    # rutas, parametros H3, tablas, DATABASE_URL, queries
-  logging_config.py            # logging estructurado compartido
-  data_availability_check.py   # chequeo de disponibilidad de datos por ciudad
-  download.py                  # ETAPA 1 — descarga OSM (boundary, POIs, red vial)
-  grid.py                      # ETAPA 2 — grid hexagonal H3 sobre Bogota
-  db.py                        # ETAPA 3 — carga a PostGIS con indices GIST
-  load_censo.py                # ETAPA 3 (opc.) — adquisicion del censo DANE
-  features.py                  # ETAPA 4 — tabla de features (SQL espacial)
-  metrics.py                   # metricas de ranking (NDCG, top-K) reutilizables v1-v3
-  mcda.py                      # MODELO v1 — MCDA baseline (scoring ponderado, sin ML)
+  config.py                    # shared: rutas, params H3, tablas, DATABASE_URL, queries
+  logging_config.py            # shared: logging estructurado
+  data/                        # PIPELINE DE DATOS (etapas 1-4)
+    download.py                #   ETAPA 1 — descarga OSM (boundary, POIs, red vial)
+    grid.py                    #   ETAPA 2 — grid hexagonal H3 sobre Bogota
+    db.py                      #   ETAPA 3 — carga a PostGIS con indices GIST
+    load_censo.py              #   ETAPA 3 (opc.) — adquisicion del censo DANE
+    features.py                #   ETAPA 4 — tabla de features (SQL espacial)
+  models/                      # MODELOS
+    metrics.py                 #   metricas de ranking (NDCG, top-K) reutilizables v1-v3
+    mcda.py                    #   v1 — MCDA baseline (scoring ponderado, sin ML)
+    lookalike.py               #   v2 — clasificador look-alike (Regresion Logistica)
+    spatial_cv.py              #   v3 — folds espaciales H3 + buffer (anti-leakage)
+    lookalike_v3.py            #   v3 — mismo modelo con Spatial Cross-Validation
+  selection/                   # fase previa
+    data_availability_check.py #   chequeo de disponibilidad de datos por ciudad
 docs/
   seleccion_area_estudio.md    # chequeo data-driven de ciudad (Overpass + DANE)
-  metodologia.md               # objetivo, comparación con Lu et al., plan v1-v3
+  metodologia.md               # objetivo, comparación con Lu et al., plan v1-v3, leakage
   features_summary.md          # balance de etiqueta, estadisticas y correlaciones
   v1_mcda_resultados.md        # pesos, anti-leakage y metricas del MCDA baseline
+  v2_lookalike_resultados.md   # clases, coeficientes, diagnostico y metricas de la LR
 data/
   raw/                         # OSM crudo: boundary, POIs, red vial (no versionado)
   processed/                   # grid_bogota.geojson, features.parquet (no versionado)
@@ -93,24 +111,26 @@ uv sync
 docker compose up -d
 
 # 2. Pipeline en orden (cada etapa es ejecutable de forma independiente e idempotente)
-uv run python -m src.download    # ETAPA 1: OSM -> data/raw/
-uv run python -m src.grid        # ETAPA 2: grid H3 -> data/processed/grid_bogota.geojson
-uv run python -m src.db          # ETAPA 3: carga a PostGIS (+ indices GIST)
-uv run python -m src.features    # ETAPA 4: -> data/processed/features.parquet (+ .csv)
+uv run python -m src.data.download    # ETAPA 1: OSM -> data/raw/
+uv run python -m src.data.grid        # ETAPA 2: grid H3 -> data/processed/grid_bogota.geojson
+uv run python -m src.data.db          # ETAPA 3: carga a PostGIS (+ indices GIST)
+uv run python -m src.data.features    # ETAPA 4: -> data/processed/features.parquet (+ .csv)
 
-# 3. Modelo v1 — MCDA baseline (no requiere PostGIS; opera sobre features.parquet)
-uv run python -m src.mcda        # v1: -> data/processed/mcda_ranking.parquet (+ .csv)
+# 3. Modelos (no requieren PostGIS; operan sobre features.parquet)
+uv run python -m src.models.mcda         # v1 MCDA -> data/processed/mcda_ranking.parquet
+uv run python -m src.models.lookalike    # v2 LR   -> data/processed/lookalike_v2_ranking.parquet
+uv run python -m src.models.lookalike_v3 # v3 LR + spatial CV -> lookalike_v3_ranking.parquet
 ```
 
 La conexión a PostGIS se lee de `DATABASE_URL` (default
 `postgresql://postgres:postgres@localhost:5433/site_selection`). Las features
 demográficas del DANE son opcionales: si el censo no está cargado, el pipeline no se
-bloquea (ver `src/load_censo.py`).
+bloquea (ver `src/data/load_censo.py`).
 
 ### Chequeo de disponibilidad de datos (fase previa)
 
 ```bash
-uv run python -m src.data_availability_check
+uv run python -m src.selection.data_availability_check
 ```
 
 Genera `data/raw/overpass_<ciudad>.json` y actualiza la tabla comparativa en

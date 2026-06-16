@@ -8,7 +8,7 @@ menos un POI D1 (positivos disponibles antes de spatial CV).
 Usa la API de h3 v4 (LatLngPoly, polygon_to_cells, cell_to_boundary, cell_to_latlng).
 
 Ejecutar de forma independiente:
-    uv run python -m src.grid
+    uv run python -m src.data.grid
 """
 
 from __future__ import annotations

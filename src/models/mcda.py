@@ -11,7 +11,7 @@ Anti-leakage (critico): las features derivadas de la ubicacion de D1
 DESPUES, como validacion honesta post-hoc (NDCG@K, top-K hitting/loss), nunca como insumo.
 
 Ejecutar de forma independiente (requiere data/processed/features.parquet de la ETAPA 4):
-    uv run python -m src.mcda
+    uv run python -m src.models.mcda
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import pandas as pd
 
 from src import config
 from src.logging_config import get_logger
-from src.metrics import ranking_report
+from src.models.metrics import ranking_report
 
 logger = get_logger(__name__)
 
@@ -34,7 +34,7 @@ def load_features() -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(
             f"No existe {path}. Corre el pipeline de datos primero "
-            "(uv run python -m src.features)."
+            "(uv run python -m src.data.features)."
         )
     df = pd.read_parquet(path)
     logger.info("Features cargadas: %d hexagonos, %d columnas", len(df), df.shape[1])

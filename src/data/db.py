@@ -8,7 +8,7 @@ La conexion se lee de la variable de entorno DATABASE_URL, con fallback definido
 src/config.py (puerto 5433; ver docker-compose.yml).
 
 Ejecutar de forma independiente:
-    uv run python -m src.db
+    uv run python -m src.data.db
 """
 
 from __future__ import annotations

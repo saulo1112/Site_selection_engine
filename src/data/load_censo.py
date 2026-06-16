@@ -12,11 +12,11 @@ Una vez tengas el archivo de manzanas localmente, colocalo como uno de:
     data/raw/manzanas_censo.gpkg   (recomendado)
     data/raw/manzanas_censo.geojson
     data/raw/MGN_ANM_MANZANA.shp   (+ .dbf/.shx/.prj)
-y vuelve a correr:  uv run python -m src.db   (cargara la tabla manzanas_censo)
-                    uv run python -m src.features
+y vuelve a correr:  uv run python -m src.data.db   (cargara la tabla manzanas_censo)
+                    uv run python -m src.data.features
 
 Ejecutar:
-    uv run python -m src.load_censo
+    uv run python -m src.data.load_censo
 """
 
 from __future__ import annotations
@@ -54,8 +54,8 @@ La descarga programatica no fue posible. Sigue estos pasos (una sola vez):
    {chr(10).join('     - ' + p.name for p in config.CENSO_PATH_CANDIDATES)}
 
 5. Recarga a PostGIS y recalcula features:
-     uv run python -m src.db
-     uv run python -m src.features
+     uv run python -m src.data.db
+     uv run python -m src.data.features
 ============================================================================
 """
 

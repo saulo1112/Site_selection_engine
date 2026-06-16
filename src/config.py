@@ -265,3 +265,61 @@ MCDA_GROUP_FEATURES = {
         ("viviendas_estimadas", +1),
     ],
 }
+
+
+# =========================================================================== #
+#  MODELOS v2 / v3 — clasificador look-alike (ML)
+#  (metodologia en docs/metodologia.md §4; resultados en docs/v2_lookalike_resultados.md)
+# =========================================================================== #
+
+# --- Definicion del problema de clasificacion ---
+# Etiqueta binaria ya calculada en features.parquet (ETAPA 4):
+#   tiene_d1 = 1  -> el hexagono YA tiene >=1 tienda D1 a <=300m ("celda tipo-D1").
+#   tiene_d1 = 0  -> el hexagono no tiene D1 cercano.
+# El clasificador estima P(tiene_d1=1) a partir de features NO-D1; esa probabilidad
+# es el score look-alike con el que se rankea. (Ver docs/metodologia.md §2 y §5.)
+LABEL_COL = "tiene_d1"
+
+# --- Features predictoras (anti-leakage) ---
+# Todas las numericas de features.parquet EXCEPTO: columnas de leakage de D1
+# (MCDA_LEAKAGE_COLS), identificadores/geo (h3_index, centroides) y la propia etiqueta.
+# El filtro de columnas 100% nulas (p.ej. demografia sin censo) se hace en runtime.
+NON_PREDICTOR_COLS = ["h3_index", "lat_centroid", "lon_centroid", LABEL_COL]
+MODEL_PREDICTOR_COLS = [
+    "n_supermercados_500m",
+    "dist_supermercado_km",
+    "n_farmacias_500m",
+    "n_colegios_500m",
+    "n_paradas_bus_500m",
+    "n_bancos_atm_500m",
+    "densidad_vial",
+    "poblacion_estimada",
+    "viviendas_estimadas",
+]  # NOTA: excluye explicitamente MCDA_LEAKAGE_COLS (n_d1_300m/500m/dist_d1_km).
+
+# --- Particion train/test de v2 (split ALEATORIO estratificado, naive a proposito) ---
+# El split aleatorio mezcla hexagonos vecinos entre train y test -> leakage por
+# autocorrelacion espacial. Es intencional: v3 lo corrige con spatial CV y se compara.
+TEST_SIZE = 0.25
+RANDOM_STATE = 42
+
+# --- Rutas de salida de v2 ---
+LOOKALIKE_V2_RANKING_PARQUET_PATH = DATA_PROCESSED / "lookalike_v2_ranking.parquet"
+LOOKALIKE_V2_RANKING_CSV_PATH = DATA_PROCESSED / "lookalike_v2_ranking.csv"
+LOOKALIKE_V2_MODEL_PATH = DATA_PROCESSED / "lookalike_v2.joblib"
+LOOKALIKE_V2_SUMMARY_PATH = DOCS / "v2_lookalike_resultados.md"
+
+# --- v3: Spatial Cross-Validation (corrige el leakage espacial de v2) ---
+# Cada hexagono res-9 se agrupa por su padre H3 a resolucion gruesa -> bloques
+# geograficos enteros van juntos a train o test (StratifiedGroupKFold). Ademas se
+# excluyen del train los hexagonos a <=SPATIAL_CV_BUFFER_RINGS anillos de cualquier
+# celda de test (buffer espacial). Asi train y test no comparten vecindario.
+SPATIAL_CV_BLOCK_RES = 6        # res padre -> ~24 bloques de ~36 km2 sobre Bogota
+SPATIAL_CV_FOLDS = 5
+SPATIAL_CV_BUFFER_RINGS = 1     # anillos H3 (grid_disk) excluidos del train
+
+# --- Rutas de salida de v3 ---
+LOOKALIKE_V3_RANKING_PARQUET_PATH = DATA_PROCESSED / "lookalike_v3_ranking.parquet"
+LOOKALIKE_V3_RANKING_CSV_PATH = DATA_PROCESSED / "lookalike_v3_ranking.csv"
+LOOKALIKE_V3_MODEL_PATH = DATA_PROCESSED / "lookalike_v3.joblib"
+LOOKALIKE_V3_SUMMARY_PATH = DOCS / "v3_spatial_cv_resultados.md"

@@ -5,7 +5,7 @@ y (si el censo esta cargado) demograficas, mas la etiqueta look-alike `tiene_d1`
 Guarda features.parquet (+ .csv) y un resumen en docs/features_summary.md.
 
 Ejecutar de forma independiente (requiere ETAPA 3 cargada):
-    uv run python -m src.features
+    uv run python -m src.data.features
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from src import config
-from src.db import get_engine
+from src.data.db import get_engine
 from src.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -105,11 +105,17 @@ def build_features_sql(engine: Engine) -> str:
             AS n_d1_500m,
         (SELECT ST_Distance(g.geom::geography, d.geom::geography) / 1000.0
             FROM pois_d1 d ORDER BY g.geom <-> d.geom LIMIT 1) AS dist_d1_km,
+        -- Competencia NO-D1: se excluye D1 (COALESCE(es_d1,0)=0) porque D1 es el
+        -- objetivo look-alike, no un competidor a medir. Incluirlo filtraria la
+        -- etiqueta (todo positivo tendria un "supermercado" = el propio D1 a <=300m).
         (SELECT count(*) FROM pois_competidores c
-            WHERE ST_DWithin(g.geom::geography, c.geom::geography, {config.BUFFER_500}))
+            WHERE COALESCE(c.es_d1, 0) = 0
+              AND ST_DWithin(g.geom::geography, c.geom::geography, {config.BUFFER_500}))
             AS n_supermercados_500m,
         (SELECT ST_Distance(g.geom::geography, c.geom::geography) / 1000.0
-            FROM pois_competidores c ORDER BY g.geom <-> c.geom LIMIT 1)
+            FROM pois_competidores c
+            WHERE COALESCE(c.es_d1, 0) = 0
+            ORDER BY g.geom <-> c.geom LIMIT 1)
             AS dist_supermercado_km,
 
         -- Complementarios (buffer 500m)
@@ -170,7 +176,7 @@ def write_summary(df: pd.DataFrame) -> None:
 
     lines = [
         "# Resumen de la tabla de features\n",
-        f"_Generado por `src/features.py`. Total de hexagonos: **{n_total}**._\n",
+        f"_Generado por `src/data/features.py`. Total de hexagonos: **{n_total}**._\n",
         "## Balance de la etiqueta `tiene_d1`\n",
         f"- Positivos (tiene_d1=1): **{n_pos}**",
         f"- Negativos (tiene_d1=0): **{n_neg}**",
@@ -188,6 +194,10 @@ def write_summary(df: pd.DataFrame) -> None:
         "debe aprender de las features de competidores, complementarios, red vial y "
         "demografia. Esto es independiente del leakage espacial por autocorrelacion, "
         "que se aborda con spatial CV en v3.\n",
+        "> **Nota de competencia (no-D1):** `n_supermercados_500m` y "
+        "`dist_supermercado_km` miden solo competidores **distintos de D1** "
+        "(`es_d1 = 0`). Incluir a D1 introduciria leakage: todo positivo tendria un "
+        "'supermercado' (el propio D1) a <=300m. Ver docs/metodologia.md §6.\n",
         "## Estadisticas descriptivas por feature\n",
         desc.round(4).to_markdown(),
         "\n## Correlacion de cada feature con `tiene_d1`\n",
@@ -211,7 +221,7 @@ def main() -> None:
     engine = get_engine()
     try:
         if not _table_exists(engine, config.TABLES["grid"]):
-            raise RuntimeError("Tabla 'grid' ausente. Corre 'uv run python -m src.db' primero.")
+            raise RuntimeError("Tabla 'grid' ausente. Corre 'uv run python -m src.data.db' primero.")
 
         sql = build_features_sql(engine)
         logger.info("Ejecutando query espacial de features...")
