@@ -1,0 +1,27 @@
+# PostGIS dedicado para Site Selection Engine.
+#
+# NOTA de puerto: el puerto host 5432 ya esta ocupado por el contenedor del
+# proyecto EUDR (eudr_postgis). Para no colisionar, este servicio expone PostGIS
+# en el puerto host 5433 -> 5432 del contenedor. La DATABASE_URL por defecto en
+# src/config.py apunta a 5433 en consecuencia. Override con la variable de
+# entorno DATABASE_URL si se desea otro destino.
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: site_selection_postgis
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: site_selection
+    ports:
+      - "5433:5432"
+    volumes:
+      - site_selection_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d site_selection"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  site_selection_pgdata:

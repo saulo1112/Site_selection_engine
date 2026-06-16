@@ -1,0 +1,45 @@
+[project]
+name = "site-selection-engine"
+version = "0.1.0"
+description = "Ranking de ubicaciones candidatas (grid H3) para expansion retail/franquicias en Colombia, con enfoque look-alike sobre Tiendas D1 (OSM + DANE + accesibilidad vial)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # --- Tabular ---
+    "pandas>=2.0",
+    "numpy>=1.24",
+    # --- Geoespacial core ---
+    "geopandas>=0.14",
+    "shapely>=2.0",
+    "pyproj>=3.6",
+    "fiona>=1.9",
+    # --- Grid hexagonal (unidad de analisis) ---
+    "h3>=4.0",
+    # --- OSM / Overpass + red vial ---
+    "requests>=2.31",
+    "osmnx>=1.9",
+    # --- ML (v2/v3) ---
+    "scikit-learn>=1.4",
+    # --- Base de datos espacial (PostGIS) ---
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "geoalchemy2>=0.15",
+    # --- IO columnar (features.parquet) ---
+    "pyarrow>=15.0",
+    # --- Visualizacion exploratoria ---
+    "matplotlib>=3.8",
+    "folium>=0.16",
+    # --- Utilidades ---
+    "tqdm>=4.66",
+    "python-dotenv>=1.0",
+    "tabulate>=0.9",
+]
+
+[dependency-groups]
+dev = [
+    "jupyterlab>=4.0",
+    "ipykernel>=6.29",
+]
+
+# NOTA: El stack de despliegue (FastAPI / Streamlit / Kepler.gl) esta PENDIENTE
+# de decision (ver README "Estado actual"). No se declara aqui todavia.
