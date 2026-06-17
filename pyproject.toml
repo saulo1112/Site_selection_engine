@@ -33,6 +33,13 @@ dependencies = [
     "tqdm>=4.66",
     "python-dotenv>=1.0",
     "tabulate>=0.9",
+    # --- Serving / API (capa de inferencia, desacoplada de PostGIS) ---
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.0",
+    # --- Frontend (mapa interactivo de hexagonos) ---
+    "streamlit>=1.33",
+    "pydeck>=0.9",
 ]
 
 [dependency-groups]
@@ -41,5 +48,20 @@ dev = [
     "ipykernel>=6.29",
 ]
 
-# NOTA: El stack de despliegue (FastAPI / Streamlit / Kepler.gl) esta PENDIENTE
-# de decision (ver README "Estado actual"). No se declara aqui todavia.
+# Stack de despliegue DECIDIDO: hibrido FastAPI (serving) + Streamlit/pydeck (UI),
+# con demo en vivo. El serving lee artefactos versionados (rankings parquet, .joblib,
+# GeoJSON de POIs); PostGIS solo se usa en el ETL local. Ver docs/despliegue.md.
+#
+# Extras de serving (instalar solo en el host de la API para una imagen mas liviana):
+#   uv pip install fastapi "uvicorn[standard]" pydantic pandas pyarrow scikit-learn h3 joblib
+[project.optional-dependencies]
+serving = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.0",
+    "pandas>=2.0",
+    "pyarrow>=15.0",
+    "scikit-learn>=1.4",
+    "h3>=4.0",
+    "joblib>=1.3",
+]

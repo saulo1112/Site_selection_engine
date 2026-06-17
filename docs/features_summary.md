@@ -14,6 +14,8 @@ _Generado por `src/data/features.py`. Total de hexagonos: **3589**._
 
 > **Nota de competencia (no-D1):** `n_supermercados_500m` y `dist_supermercado_km` miden solo competidores **distintos de D1** (`es_d1 = 0`). Incluir a D1 introduciria leakage: todo positivo tendria un 'supermercado' (el propio D1) a <=300m. Ver docs/metodologia.md §6.
 
+> **Correlacion residual `dist_supermercado_km` <-> `dist_d1_km`**: **0.7653**. Se interpreta como co-localizacion real (zonas con comercio denso tienden a tener tanto D1 como otros supermercados cerca), no como leakage: ya se excluyo a D1 de `dist_supermercado_km` (nota anterior). Ver docs/metodologia.md §6.1.
+
 ## Estadisticas descriptivas por feature
 
 |                      |   count |    mean |    std |   min |    25% |     50% |     75% |     max |   pct_nulos |
@@ -45,4 +47,4 @@ _Generado por `src/data/features.py`. Total de hexagonos: **3589**._
 | dist_d1_km           |             -0.4792 |
 
 ## Features demograficas
-_No disponibles en esta corrida: la tabla `manzanas_censo` no estaba cargada. Ver `src/load_censo.py` para habilitarlas._
+_No disponibles en esta corrida: la tabla `manzanas_censo` no estaba cargada. Ver `src/data/load_censo.py` para habilitarlas._

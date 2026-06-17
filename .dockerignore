@@ -1,0 +1,17 @@
+# El ETL pesado no entra en la imagen de la API (serving desacoplado de PostGIS).
+.git/
+.venv/
+cache/
+docs/
+app/
+**/__pycache__/
+*.pyc
+# Datos crudos pesados (la API solo necesita pois_*.geojson, copiados explicitamente).
+data/raw/*.graphml
+data/raw/*.zip
+data/raw/manzanas_*
+data/raw/estrato_*
+data/raw/MGN_*
+data/raw/overpass_*.json
+data/raw/bogota_boundary.geojson
+data/raw/download_log.json

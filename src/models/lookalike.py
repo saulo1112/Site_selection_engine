@@ -33,6 +33,7 @@ from __future__ import annotations
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
@@ -93,12 +94,17 @@ def select_predictors(df: pd.DataFrame) -> list[str]:
 # Modelo
 # --------------------------------------------------------------------------- #
 def build_model() -> Pipeline:
-    """Regresion Logistica con estandarizacion (LR es sensible a la escala).
+    """Regresion Logistica con imputacion + estandarizacion (LR es sensible a la escala).
 
-    `class_weight='balanced'` compensa el desbalance (~24.5% positivos) penalizando
-    mas los errores en la clase minoritaria.
+    - `SimpleImputer(median)`: las features demograficas (censo/estrato, v4) tienen NULL
+      PARCIAL (manzanas no cubren todo el grid). La mediana se ajusta DENTRO de cada fold
+      (parte del Pipeline) -> sin fuga de informacion entre train y test. Para v2/v3,
+      cuyas features no tienen NaN, el imputer es un no-op inocuo.
+    - `class_weight='balanced'`: compensa el desbalance (~24.5% positivos) penalizando
+      mas los errores en la clase minoritaria.
     """
     return Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
         ("scaler", StandardScaler()),
         ("clf", LogisticRegression(
             class_weight="balanced",

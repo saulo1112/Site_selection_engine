@@ -126,6 +126,17 @@ CENSO_PATH_CANDIDATES = [
     DATA_RAW / "MGN_ANM_MANZANA.shp",
 ]
 
+# Estrato socioeconomico IDECA (Bogota). El estrato NO viene en el censo DANE: es
+# una capa aparte ("Manzana Estratificacion" de IDECA / Datos Abiertos Bogota) con el
+# estrato (1-6) por manzana. Carga opcional, no bloquea el pipeline (ver
+# src/data/load_estrato.py). Relevante para el look-alike: D1 es hard-discount con
+# foco en estratos 1-3.
+ESTRATO_PATH_CANDIDATES = [
+    DATA_RAW / "estrato_bogota.gpkg",
+    DATA_RAW / "estrato_bogota.geojson",
+    DATA_RAW / "ManzanaEstratificacion.shp",
+]
+
 # --- Grid H3 ---
 H3_RESOLUTION = 9          # ~0.105 km2 por hexagono (escala de barrio)
 
@@ -148,6 +159,7 @@ TABLES = {
     "grid": "grid",
     "streets": "streets",
     "manzanas_censo": "manzanas_censo",
+    "manzanas_estrato": "manzanas_estrato",
 }
 
 # --- Buffers de features (metros) ---
@@ -218,8 +230,10 @@ MCDA_RANKING_CSV_PATH = DATA_PROCESSED / "mcda_ranking.csv"
 MCDA_SUMMARY_PATH = DOCS / "v1_mcda_resultados.md"
 
 # --- Evaluacion honesta (post-hoc) ---
-# K para las metricas de ranking (NDCG@K, top-K hitting, top-K loss). ~5.5% del grid,
-# comparable al ratio de positivos observado, para que "elegir K celdas" sea realista.
+# K para las metricas de ranking (NDCG@K, top-K hitting, top-K loss). K=200 ~ 5.5% del
+# grid (3589 hexagonos): tamano de shortlist realista para "elegir K celdas a explorar".
+# Nota: el ratio real de positivos es ~24.5% (879/3589), bastante mayor que K -> por
+# eso el top-K hitting tiene un techo < 1 (ver "hitting_ceiling" en write_summary de v1).
 TOP_K = 200
 
 # --- Features derivadas de D1 (LEAKAGE) — EXCLUIDAS del score MCDA ---
@@ -261,8 +275,9 @@ MCDA_GROUP_FEATURES = {
         ("densidad_vial", +1),
     ],
     "demografia": [
-        ("poblacion_estimada", +1),
+        ("poblacion_estimada", +1),     # mas mercado local potencial
         ("viviendas_estimadas", +1),
+        ("estrato_promedio", -1),       # D1 (hard-discount) apunta a estratos bajos
     ],
 }
 
@@ -295,7 +310,17 @@ MODEL_PREDICTOR_COLS = [
     "densidad_vial",
     "poblacion_estimada",
     "viviendas_estimadas",
+    "estrato_promedio",
 ]  # NOTA: excluye explicitamente MCDA_LEAKAGE_COLS (n_d1_300m/500m/dist_d1_km).
+
+# Subconjunto demografico (censo DANE + estrato IDECA). v4 lo usa para aislar el
+# aporte de la demografia: compara el modelo SIN estas columnas (= predictores de v3)
+# contra el modelo CON ellas. Quedan vacias (NaN) si las capas no estan cargadas.
+DEMOGRAPHIC_COLS = [
+    "poblacion_estimada",
+    "viviendas_estimadas",
+    "estrato_promedio",
+]
 
 # --- Particion train/test de v2 (split ALEATORIO estratificado, naive a proposito) ---
 # El split aleatorio mezcla hexagonos vecinos entre train y test -> leakage por
@@ -323,3 +348,64 @@ LOOKALIKE_V3_RANKING_PARQUET_PATH = DATA_PROCESSED / "lookalike_v3_ranking.parqu
 LOOKALIKE_V3_RANKING_CSV_PATH = DATA_PROCESSED / "lookalike_v3_ranking.csv"
 LOOKALIKE_V3_MODEL_PATH = DATA_PROCESSED / "lookalike_v3.joblib"
 LOOKALIKE_V3_SUMMARY_PATH = DOCS / "v3_spatial_cv_resultados.md"
+
+
+# =========================================================================== #
+#  MODELO v4 — look-alike con DEMOGRAFIA (censo DANE + estrato IDECA)
+#  Mismo esquema honesto de v3 (spatial CV). Aisla el aporte de la demografia:
+#  compara predictores SIN demografia (= v3) vs CON demografia.
+#  (resultados en docs/v4_demografia_resultados.md)
+# =========================================================================== #
+LOOKALIKE_V4_RANKING_PARQUET_PATH = DATA_PROCESSED / "lookalike_v4_ranking.parquet"
+LOOKALIKE_V4_RANKING_CSV_PATH = DATA_PROCESSED / "lookalike_v4_ranking.csv"
+LOOKALIKE_V4_MODEL_PATH = DATA_PROCESSED / "lookalike_v4.joblib"
+LOOKALIKE_V4_SUMMARY_PATH = DOCS / "v4_demografia_resultados.md"
+
+
+# =========================================================================== #
+#  SERVING — API de inferencia (FastAPI) + frontend (Streamlit)
+#  El serving en RUNTIME se desacopla de PostGIS: lee artefactos versionados
+#  (rankings parquet, modelo .joblib, GeoJSON de POIs). PostGIS solo se usa en
+#  el ETL local (ver docker-compose.yml). Ver docs/despliegue.md.
+# =========================================================================== #
+
+# Modelo servido por defecto (clave de SERVING_RANKINGS / SERVING_MODELS).
+# Override con la variable de entorno SERVING_MODEL.
+SERVING_MODEL = os.environ.get("SERVING_MODEL", "v3")
+
+# Rankings disponibles para servir (precomputados por cada modelo).
+SERVING_RANKINGS = {
+    "mcda": MCDA_RANKING_PARQUET_PATH,
+    "v2": LOOKALIKE_V2_RANKING_PARQUET_PATH,
+    "v3": LOOKALIKE_V3_RANKING_PARQUET_PATH,
+    "v4": LOOKALIKE_V4_RANKING_PARQUET_PATH,
+}
+# Columna de score por modelo (el nombre varia entre rankings).
+SERVING_SCORE_COL = {
+    "mcda": "score_mcda",
+    "v2": "score_lookalike",
+    "v3": "score_lookalike_v3",
+    "v4": "score_lookalike_v4",
+}
+# Modelos .joblib para inferencia en vivo (POST /score).
+SERVING_MODELS = {
+    "v2": LOOKALIKE_V2_MODEL_PATH,
+    "v3": LOOKALIKE_V3_MODEL_PATH,
+    "v4": LOOKALIKE_V4_MODEL_PATH,
+}
+# Capas POI (GeoJSON crudos) que el frontend puede superponer.
+SERVING_POI_LAYERS = {
+    "d1": POIS_D1_PATH,
+    "competidores": POIS_COMPETIDORES_PATH,
+    "complementarios": POIS_COMPLEMENTARIOS_PATH,
+}
+
+# CORS para el frontend (Streamlit Cloud u otro origen). "*" por defecto para la
+# demo publica; restringir en produccion via env SERVING_CORS_ORIGINS (coma-separado).
+SERVING_CORS_ORIGINS = [
+    o.strip() for o in os.environ.get("SERVING_CORS_ORIGINS", "*").split(",") if o.strip()
+]
+
+# Base URL de la API que consume el frontend Streamlit. Vacio -> Streamlit cae a
+# leer el parquet local directamente (fallback robusto para la demo).
+API_BASE_URL = os.environ.get("API_BASE_URL", "")

@@ -23,13 +23,17 @@ logger = get_logger(__name__)
 # Columnas candidatas de poblacion/vivienda en el MGN-CNPV 2018 (varian por version).
 CENSO_POP_CANDIDATES = ["stp27_pers", "tp27_perso", "personas", "poblacion", "tp34_1_se"]
 CENSO_VIV_CANDIDATES = ["tp19_ee_e1", "viviendas", "tp16_hog", "tp9_1_uso", "stp19_vivi"]
+# Columna candidata de estrato (1-6) en la capa de IDECA/SDP (varia por version).
+ESTRATO_COL_CANDIDATES = [
+    "estrato", "estrato_ur", "cod_estrat", "codigo_estrato", "estrato_no",
+]
 
 # Lista canonica de features numericas para el resumen.
 FEATURE_COLS = [
     "n_d1_300m", "n_d1_500m", "dist_d1_km", "n_supermercados_500m",
     "dist_supermercado_km", "n_farmacias_500m", "n_colegios_500m",
     "n_paradas_bus_500m", "n_bancos_atm_500m", "densidad_vial",
-    "poblacion_estimada", "viviendas_estimadas",
+    "poblacion_estimada", "viviendas_estimadas", "estrato_promedio",
 ]
 
 # Features derivadas directamente de la ubicacion de D1: la etiqueta
@@ -37,8 +41,8 @@ FEATURE_COLS = [
 # como predictores en v2/v3 (target leakage). Se documenta en el resumen.
 D1_DERIVED_COLS = ["n_d1_300m", "n_d1_500m", "dist_d1_km"]
 
-# Columnas demograficas (nulas si el censo no esta cargado).
-CENSO_FEATURE_COLS = ["poblacion_estimada", "viviendas_estimadas"]
+# Columnas demograficas (nulas si el censo / estrato no estan cargados).
+CENSO_FEATURE_COLS = ["poblacion_estimada", "viviendas_estimadas", "estrato_promedio"]
 
 
 # --------------------------------------------------------------------------- #
@@ -63,6 +67,7 @@ def _detect_column(engine: Engine, table: str, candidates: list[str]) -> str | N
 def build_features_sql(engine: Engine) -> str:
     has_streets = _table_exists(engine, config.TABLES["streets"])
     has_censo = _table_exists(engine, config.TABLES["manzanas_censo"])
+    has_estrato = _table_exists(engine, config.TABLES["manzanas_estrato"])
 
     # --- Red vial ---
     if has_streets:
@@ -76,19 +81,33 @@ def build_features_sql(engine: Engine) -> str:
         logger.warning("Tabla 'streets' ausente -> densidad_vial = NULL")
         densidad_vial = "NULL::double precision AS densidad_vial"
 
-    # --- Demografia (prorrateo por area de interseccion) ---
+    # --- Demografia: poblacion / viviendas (prorrateo por area, magnitud EXTENSIVA) ---
+    censo_table = config.TABLES["manzanas_censo"]
     if has_censo:
-        pop_col = _detect_column(engine, config.TABLES["manzanas_censo"], CENSO_POP_CANDIDATES)
-        viv_col = _detect_column(engine, config.TABLES["manzanas_censo"], CENSO_VIV_CANDIDATES)
+        pop_col = _detect_column(engine, censo_table, CENSO_POP_CANDIDATES)
+        viv_col = _detect_column(engine, censo_table, CENSO_VIV_CANDIDATES)
         logger.info("Censo disponible. Columnas detectadas: poblacion=%s, viviendas=%s",
                     pop_col, viv_col)
-        poblacion = _prorate_expr(pop_col, "poblacion_estimada")
-        viviendas = _prorate_expr(viv_col, "viviendas_estimadas")
+        poblacion = _prorate_sum_expr(censo_table, pop_col, "poblacion_estimada")
+        viviendas = _prorate_sum_expr(censo_table, viv_col, "viviendas_estimadas")
     else:
-        logger.warning("Tabla 'manzanas_censo' ausente -> features demograficas = NULL "
-                       "(ver src/load_censo.py)")
+        logger.warning("Tabla 'manzanas_censo' ausente -> poblacion/viviendas = NULL "
+                       "(ver src/data/load_censo.py)")
         poblacion = "NULL::double precision AS poblacion_estimada"
         viviendas = "NULL::double precision AS viviendas_estimadas"
+
+    # --- Demografia: estrato (promedio ponderado por area, magnitud INTENSIVA) ---
+    # El estrato es ordinal (1-6): no se suma sino que se promedia ponderando por el
+    # area de interseccion. Los valores <=0 (no residencial / sin estrato) se ignoran.
+    estrato_table = config.TABLES["manzanas_estrato"]
+    if has_estrato:
+        estrato_col = _detect_column(engine, estrato_table, ESTRATO_COL_CANDIDATES)
+        logger.info("Estrato disponible. Columna detectada: estrato=%s", estrato_col)
+        estrato = _prorate_avg_expr(estrato_table, estrato_col, "estrato_promedio")
+    else:
+        logger.warning("Tabla 'manzanas_estrato' ausente -> estrato_promedio = NULL "
+                       "(ver src/data/load_estrato.py)")
+        estrato = "NULL::double precision AS estrato_promedio"
 
     return f"""
     SELECT
@@ -141,13 +160,16 @@ def build_features_sql(engine: Engine) -> str:
 
         -- Demografia
         {poblacion},
-        {viviendas}
+        {viviendas},
+        {estrato}
 
     FROM grid g
     """
 
 
-def _prorate_expr(col: str | None, alias: str) -> str:
+def _prorate_sum_expr(table: str, col: str | None, alias: str) -> str:
+    """Prorrateo de una magnitud EXTENSIVA (poblacion, viviendas): suma ponderada por
+    la fraccion de cada manzana que cae dentro del hexagono. Sin doble conteo."""
     if col is None:
         return f"NULL::double precision AS {alias}"
     return f"""
@@ -156,13 +178,75 @@ def _prorate_expr(col: str | None, alias: str) -> str:
         * ST_Area(ST_Intersection(m.geom, g.geom)::geography)
         / NULLIF(ST_Area(m.geom::geography), 0)
      ), 0)
-     FROM manzanas_censo m
+     FROM {table} m
      WHERE ST_Intersects(m.geom, g.geom)) AS {alias}"""
+
+
+def _prorate_avg_expr(table: str, col: str | None, alias: str) -> str:
+    """Promedio ponderado de una magnitud INTENSIVA (estrato 1-6): media de los valores
+    de manzana ponderada por el area de interseccion con el hexagono. Se descartan
+    valores <=0 (no residencial / sin estrato). Devuelve NULL si no hay manzana valida."""
+    if col is None:
+        return f"NULL::double precision AS {alias}"
+    return f"""
+    (SELECT SUM(m.{col}::double precision * a) / NULLIF(SUM(a), 0)
+     FROM (
+        SELECT mm.{col},
+               ST_Area(ST_Intersection(mm.geom, g.geom)::geography) AS a
+        FROM {table} mm
+        WHERE ST_Intersects(mm.geom, g.geom)
+          AND mm.{col} IS NOT NULL
+          AND mm.{col}::double precision > 0
+     ) m) AS {alias}"""
 
 
 # --------------------------------------------------------------------------- #
 # Resumen
 # --------------------------------------------------------------------------- #
+def _demografia_section(df: pd.DataFrame, n_total: int) -> list[str]:
+    """Seccion de cobertura demografica (censo DANE + estrato IDECA), honesta.
+
+    Las manzanas no cubren todo el grid (zonas no residenciales/rurales o sin estrato),
+    asi que reporta explicitamente cuantos hexagonos quedan sin dato y por que.
+    """
+    present = [c for c in CENSO_FEATURE_COLS if c in df.columns and df[c].notna().any()]
+    if not present:
+        return [
+            "\n## Features demograficas\n",
+            "_No disponibles en esta corrida: no estaban cargadas las tablas "
+            "`manzanas_censo` (poblacion/viviendas) ni `manzanas_estrato` (estrato). "
+            "Ver `src/data/load_censo.py` y `src/data/load_estrato.py` para habilitarlas. "
+            "El modelo v4 las incluye; con NULL parcial se imputa la mediana "
+            "(ver `src/models/lookalike.py::build_model`)._\n",
+        ]
+
+    cov_rows = [
+        f"| `{c}` | {df[c].notna().sum()} | "
+        f"{df[c].notna().mean() * 100:.1f}% | {df[c].isna().mean() * 100:.1f}% |"
+        for c in present
+    ]
+    out = [
+        "\n## Features demograficas — cobertura\n",
+        "Censo DANE (CNPV/MGN 2018, poblacion/viviendas) + estrato IDECA, prorrateados "
+        "por area de interseccion manzana<->hexagono. Las manzanas no cubren todo el "
+        "grid (zonas no residenciales/rurales; estrato 0 = sin estrato, tratado como "
+        "nulo), por lo que parte de los hexagonos queda **sin dato** (NULL). El modelo "
+        "v4 imputa la **mediana** para esos casos en vez de descartarlos.\n",
+        f"_Total de hexagonos: **{n_total}**._\n",
+        "| Feature | Hex con dato | % con dato | % NULL |",
+        "|---|---|---|---|",
+        *cov_rows,
+    ]
+    if "estrato_promedio" in present:
+        out.append(
+            "\n> **Hipotesis look-alike (a verificar en v4):** D1 es hard-discount con "
+            "foco en estratos bajos -> se espera que `estrato_promedio` tenga relacion "
+            "**negativa** con `tiene_d1` (a menor estrato, mas probable presencia de D1). "
+            "El coeficiente de la LR en v4 lo confirmara o no, honestamente.\n"
+        )
+    return out
+
+
 def write_summary(df: pd.DataFrame) -> None:
     n_total = len(df)
     n_pos = int((df["tiene_d1"] == 1).sum())
@@ -173,6 +257,13 @@ def write_summary(df: pd.DataFrame) -> None:
     desc = df[present_feats].describe().T
     desc["pct_nulos"] = df[present_feats].isna().mean().mul(100).round(2)
     corr = df[present_feats + ["tiene_d1"]].corr(numeric_only=True)["tiene_d1"].drop("tiene_d1")
+
+    # Correlacion residual entre distancia a competidor (no-D1) y distancia a D1: mide
+    # si la senal de "cerca de un supermercado" es solo co-localizacion con D1 (legitima,
+    # no leakage) o si quedo alguna fuga residual tras el fix de es_d1=0 (ver metodologia §6.1).
+    resid_corr = float("nan")
+    if "dist_supermercado_km" in df.columns and "dist_d1_km" in df.columns:
+        resid_corr = float(df["dist_supermercado_km"].corr(df["dist_d1_km"]))
 
     lines = [
         "# Resumen de la tabla de features\n",
@@ -198,17 +289,17 @@ def write_summary(df: pd.DataFrame) -> None:
         "`dist_supermercado_km` miden solo competidores **distintos de D1** "
         "(`es_d1 = 0`). Incluir a D1 introduciria leakage: todo positivo tendria un "
         "'supermercado' (el propio D1) a <=300m. Ver docs/metodologia.md §6.\n",
+        f"> **Correlacion residual `dist_supermercado_km` <-> `dist_d1_km`**: "
+        f"**{resid_corr:.4f}**. Se interpreta como co-localizacion real (zonas con "
+        "comercio denso tienden a tener tanto D1 como otros supermercados cerca), no "
+        "como leakage: ya se excluyo a D1 de `dist_supermercado_km` (nota anterior). "
+        "Ver docs/metodologia.md §6.1.\n",
         "## Estadisticas descriptivas por feature\n",
         desc.round(4).to_markdown(),
         "\n## Correlacion de cada feature con `tiene_d1`\n",
         corr.round(4).sort_values(ascending=False).to_frame("corr_con_tiene_d1").to_markdown(),
     ]
-    if "poblacion_estimada" not in present_feats:
-        lines.append(
-            "\n## Features demograficas\n"
-            "_No disponibles en esta corrida: la tabla `manzanas_censo` no estaba "
-            "cargada. Ver `src/load_censo.py` para habilitarlas._\n"
-        )
+    lines += _demografia_section(df, n_total)
     config.FEATURES_SUMMARY_PATH.write_text("\n".join(lines), encoding="utf-8")
     logger.info("Resumen escrito -> %s", config.FEATURES_SUMMARY_PATH.name)
 

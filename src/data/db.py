@@ -106,12 +106,26 @@ def load_censo(engine: Engine) -> None:
     if censo_file is None:
         logger.warning(
             "No se encontro archivo de censo (%s). Se omite 'manzanas_censo'. "
-            "Para habilitar features demograficas, ver src/load_censo.py.",
+            "Para habilitar features demograficas, ver src/data/load_censo.py.",
             ", ".join(p.name for p in config.CENSO_PATH_CANDIDATES),
         )
         return
     logger.info("Cargando censo desde %s", censo_file.name)
     load_layer(gpd.read_file(censo_file), config.TABLES["manzanas_censo"], engine)
+
+
+def load_estrato(engine: Engine) -> None:
+    """Carga manzanas con estrato (IDECA) si hay un archivo local; si no, no bloquea."""
+    estrato_file = next((p for p in config.ESTRATO_PATH_CANDIDATES if p.exists()), None)
+    if estrato_file is None:
+        logger.warning(
+            "No se encontro archivo de estrato (%s). Se omite 'manzanas_estrato'. "
+            "Para habilitar la feature de estrato, ver src/data/load_estrato.py.",
+            ", ".join(p.name for p in config.ESTRATO_PATH_CANDIDATES),
+        )
+        return
+    logger.info("Cargando estrato desde %s", estrato_file.name)
+    load_layer(gpd.read_file(estrato_file), config.TABLES["manzanas_estrato"], engine)
 
 
 # --------------------------------------------------------------------------- #
@@ -128,6 +142,7 @@ def main() -> None:
         load_geojson_layer(config.GRID_PATH, config.TABLES["grid"], engine)
         load_streets(engine)
         load_censo(engine)
+        load_estrato(engine)
         logger.info("ETAPA 3 completa.")
     finally:
         engine.dispose()

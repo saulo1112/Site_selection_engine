@@ -1,6 +1,6 @@
 # Resultados v1 — MCDA baseline
 
-_Generado por `src/mcda.py`. Total de hexagonos: **3589**._
+_Generado por `src/models/mcda.py`. Total de hexagonos: **3589**._
 
 ## Que es esta version
 
@@ -10,7 +10,7 @@ Score ponderado e **interpretable**, sin ML: normalizacion min-max por feature y
 
 Las features derivadas de la ubicacion de D1 (`n_d1_300m`, `n_d1_500m`, `dist_d1_km`) se **excluyen del score**: la etiqueta `tiene_d1` se define como `n_d1_300m >= 1`, por lo que usarlas seria leakage tautologico. La etiqueta se usa **solo despues**, como validacion honesta (metricas de ranking abajo), nunca como insumo del score.
 
-> **Nota:** las features demograficas (`poblacion_estimada`, `viviendas_estimadas`) no estan disponibles en esta corrida (censo DANE no cargado, ver `src/load_censo.py`). Su peso de grupo se redistribuyo proporcionalmente entre los grupos presentes.
+> **Nota:** las features demograficas (`poblacion_estimada`, `viviendas_estimadas`) no estan disponibles en esta corrida (censo DANE no cargado, ver `src/data/load_censo.py`). Su peso de grupo se redistribuyo proporcionalmente entre los grupos presentes.
 
 ## Pesos efectivos por grupo
 

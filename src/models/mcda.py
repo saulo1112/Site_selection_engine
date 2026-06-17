@@ -171,7 +171,7 @@ def write_summary(df: pd.DataFrame, meta: dict, metrics: dict[str, float]) -> No
 
     lines = [
         "# Resultados v1 — MCDA baseline\n",
-        f"_Generado por `src/mcda.py`. Total de hexagonos: **{n_total}**._\n",
+        f"_Generado por `src/models/mcda.py`. Total de hexagonos: **{n_total}**._\n",
         "## Que es esta version\n",
         "Score ponderado e **interpretable**, sin ML: normalizacion min-max por feature "
         "y combinacion lineal con pesos a priori definidos por razonamiento de negocio "
@@ -188,7 +188,7 @@ def write_summary(df: pd.DataFrame, meta: dict, metrics: dict[str, float]) -> No
         lines.append(
             "> **Nota:** las features demograficas "
             f"(`{'`, `'.join(excluded_demo)}`) no estan disponibles en esta corrida "
-            "(censo DANE no cargado, ver `src/load_censo.py`). Su peso de grupo se "
+            "(censo DANE no cargado, ver `src/data/load_censo.py`). Su peso de grupo se "
             "redistribuyo proporcionalmente entre los grupos presentes.\n"
         )
 

@@ -20,7 +20,7 @@ registra a mano en docs/seleccion_area_estudio.md), no programatica: el CNPV/MGN
 cubre las 4 ciudades de forma uniforme a nivel manzana, asi que no discrimina.
 
 Uso:
-    uv run python -m src.data_availability_check
+    uv run python -m src.selection.data_availability_check
 """
 
 from __future__ import annotations
@@ -161,7 +161,7 @@ def write_table_to_doc(df: pd.DataFrame) -> None:
     table_md = df.to_markdown(index=False)
     block = (
         f"{MARKER_START}\n"
-        f"\n_Generado por `src/data_availability_check.py` el {stamp}._\n\n"
+        f"\n_Generado por `src/selection/data_availability_check.py` el {stamp}._\n\n"
         f"{table_md}\n\n"
         f"_Umbral de positivos viables: D1 >= {config.MIN_D1_VIABLE} "
         f"(margen para separacion espacial en v3)._\n"

@@ -70,9 +70,15 @@ supuesto fuerte de que **la estrategia de localización de D1 es buena** (ver §
 La elección de **ciudad de estudio** y la justificación *data-driven* de la
 disponibilidad de estas fuentes están en **[seleccion_area_estudio.md](seleccion_area_estudio.md)**.
 
+> **Nota sobre el conteo de D1.** El chequeo de ciudad usó una query Overpass estricta
+> (solo `brand`, 129 para Bogotá) para comparar las 4 ciudades con un criterio uniforme.
+> El pipeline de producción usa una query más permisiva (`brand` o `name~"D1"`) y carga
+> **166** POIs D1 (`data/raw/pois_d1.geojson`) — el número real que entra al modelo.
+> Ver la reconciliación completa en `seleccion_area_estudio.md` §5.
+
 ---
 
-## 4. Plan de iteración v1 → v2 → v3
+## 4. Plan de iteración v1 → v2 → v3 → v4
 
 La iteración honesta (replicando el estándar del proyecto EUDR) documenta no solo el
 modelo final sino **por qué** cada versión fue insuficiente.
@@ -132,6 +138,33 @@ modelo final sino **por qué** cada versión fue insuficiente.
   residuales; útil sobre todo si en el futuro se añade demografía/estrato y aparecen
   no-linealidades.
 
+### v4 — v3 + demografía (DANE + IDECA)
+- **Qué.** Mismo modelo (Regresión Logística) y **mismo** esquema de spatial CV de v3, pero
+  añadiendo las features demográficas prorrateadas por manzana: **población** y **viviendas**
+  (censo DANE CNPV 2018) y **estrato** socioeconómico (IDECA Bogotá). Implementado en
+  `src/models/lookalike_v4.py`.
+- **Prorrateo (dos naturalezas).** Población/viviendas son magnitudes **extensivas** → suma
+  ponderada por la fracción del área de cada manzana dentro del hexágono (sin doble conteo),
+  vía `_prorate_sum_expr`. El estrato es **intensivo/ordinal** (1-6) → **promedio ponderado**
+  por área de intersección (no se suma), descartando estrato 0/no residencial, vía
+  `_prorate_avg_expr` (ambos en `src/data/features.py`).
+- **NULL parcial + imputación.** Las manzanas no cubren todo el grid (zonas no residenciales
+  / sin estrato) → demografía con NULL parcial. En vez de descartar hexágonos, el `Pipeline`
+  incorpora un `SimpleImputer(median)` ajustado **dentro de cada fold** (`build_model` en
+  `src/models/lookalike.py`), sin fuga entre train y test. La **cobertura** (% con dato) se
+  reporta en [features_summary.md](features_summary.md) y en los resultados de v4.
+- **Aislar el aporte (diseño honesto).** v4 evalúa, bajo idéntico spatial CV, dos conjuntos
+  de predictores: **BASE** (sin demografía, = v3) y **FULL** (+ demografía, = v4). El Δ de
+  métricas OOF aísla el aporte de la demografía, no del método de validación. Si la
+  demografía **no** mueve las métricas, se reporta tal cual (mismo criterio que el hallazgo
+  honesto de v3); v4 se adopta como producción solo si mejora o empata con mejor
+  interpretabilidad.
+- **Hipótesis de negocio a verificar.** D1 es *hard-discount* con foco en estratos bajos →
+  se espera que `estrato_promedio` tenga coeficiente **negativo** (a menor estrato, mayor
+  P(tipo-D1)). El coeficiente de la LR en v4 lo confirma o no.
+- **Resultados.** Generados al cargar las capas y correr el módulo, en
+  [v4_demografia_resultados.md](v4_demografia_resultados.md).
+
 ---
 
 ## 5. Limitaciones honestas
@@ -170,8 +203,10 @@ Se distinguen **dos** tipos de leakage, con tratamientos distintos.
   - **Evidencia del fix.** Positivos con `dist_supermercado_km ≤ 0.30`: **100 % → 65.1 %**;
     con `n_supermercados_500m ≥ 1`: **100 % → 81.7 %**; coeficiente LR: **-6.33 → -1.09**.
     Caída honesta de métricas: v1 NDCG@200 0.8495→0.8033; v2 ROC-AUC 0.9177→0.7801,
-    PR-AUC 0.7724→0.5970. La correlación residual `dist_supermercado`↔`dist_d1`=0.765 es
-    co-localización real (señal legítima del look-alike), no leakage.
+    PR-AUC 0.7724→0.5970. La correlación residual `dist_supermercado_km`↔`dist_d1_km` =
+    **0.7653** (calculada en `src/data/features.py::write_summary()`, ver
+    [features_summary.md](features_summary.md)) es co-localización real (señal legítima
+    del look-alike), no leakage.
 
 ### 6.2 Leakage por autocorrelación espacial (v2 → v3)
 

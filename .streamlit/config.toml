@@ -1,0 +1,7 @@
+# Configuracion del frontend Streamlit.
+[theme]
+base = "light"
+primaryColor = "#e23b3b"
+
+[server]
+headless = true

@@ -34,14 +34,14 @@ una muestra demasiado pequeña o desbalanceada. Por eso el chequeo mide la seña
 - **Fuentes DANE/estrato**: verificadas manualmente vía búsqueda web (no programático,
   porque el censo no tiene una API de conteo equivalente a Overpass) — ver §4.
 
-Script: `src/data_availability_check.py` (`uv run python -m src.data_availability_check`).
+Script: `src/selection/data_availability_check.py` (`uv run python -m src.selection.data_availability_check`).
 Respuestas crudas de Overpass: `data/raw/overpass_<ciudad>.json`.
 
 ## 3. Resultados — señal D1 en OpenStreetMap
 
 <!-- AUTO-GENERATED:OVERPASS_TABLE:START -->
 
-_Generado por `src/data_availability_check.py` el 2026-06-15 23:16 UTC._
+_Generado por `src/selection/data_availability_check.py` el 2026-06-15 23:16 UTC._
 
 | Ciudad       |   relation_id |   D1 (brand) |   D1 (por nombre) |   Ara |   Total shop=* |   Ratio D1/shops (%) | Positivos viables   |
 |:-------------|--------------:|-------------:|------------------:|------:|---------------:|---------------------:|:--------------------|
@@ -105,3 +105,13 @@ ciudades — Barranquilla (1.48%) y Medellín (1.40%) tienen mayor *proporción*
 sobre el total de comercio mapeado. Sin embargo, para el clasificador look-alike el
 factor limitante es el **conteo absoluto** de positivos disponibles para entrenar y
 validar con spatial CV, no la proporción relativa — por eso prevalece Bogotá.
+
+**Nota de reconciliación (129 vs. 166).** Este chequeo de ciudad usa una query
+Overpass **estricta** (`brand` exacto) para tener un criterio uniforme y comparable
+entre las 4 ciudades candidatas: 129 para Bogotá. Una vez fijada la ciudad, el
+pipeline de producción (`config.PIPELINE_QUERY_D1`) usa una query más permisiva
+(`brand` **o** `name~"D1"`, para capturar tiendas mal etiquetadas sin el tag `brand`)
+y carga **166** POIs D1 en `data/raw/pois_d1.geojson` — el número que efectivamente
+entra al pipeline y al modelo look-alike. La diferencia (129 → 166) es un cambio de
+criterio de recall, no una inconsistencia de datos; no afecta la decisión de ciudad,
+que domina por un orden de magnitud con cualquiera de los dos números.
