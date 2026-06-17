@@ -1,182 +1,290 @@
-"""Frontend del Site Selection Engine — mapa interactivo de hexagonos look-alike.
+"""Frontend del Site Selection Engine — narrativa de decision para expansion D1.
 
-Arquitectura HIBRIDA: consume la API FastAPI (src/api) si `API_BASE_URL` esta definido;
-si no responde (o no esta configurado), cae a leer los artefactos locales directamente
-(robusto para la demo). El mapa usa pydeck H3HexagonLayer, que renderiza los hexagonos
-nativamente desde el `h3_index`.
+Cuenta una historia en 3 golpes: (1) donde estan las tiendas D1 hoy, (2) cual es
+LA recomendacion #1 para la proxima apertura, (3) por que ese hexagono, comparando
+sus features contra el promedio de las zonas que ya tienen D1.
+
+Lee directamente los artefactos locales (parquet + GeoJSON) — sin API, mas simple y
+robusto para la demo. El mapa usa pydeck: H3HexagonLayer para el score de fondo,
+una capa destacada para el hexagono #1, y ScatterplotLayer para las tiendas actuales.
 
 Ejecutar local:
     uv run streamlit run app/streamlit_app.py
 
-Despliegue: Streamlit Community Cloud (app principal = app/streamlit_app.py).
-Configurar el secret API_BASE_URL con la URL publica de la API.
+Despliegue: Streamlit Community Cloud (app principal = app/streamlit_app.py). Los
+rankings/parquet/GeoJSON van versionados en git (ver docs/despliegue.md).
 """
 
 from __future__ import annotations
 
-import os
+import json
+import sys
+from pathlib import Path
+
+# Raiz del proyecto en sys.path, independiente del cwd desde el que se lance streamlit.
+_PROJECT_ROOT = Path(__file__).parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import pandas as pd
 import pydeck as pdk
-import requests
 import streamlit as st
 
-st.set_page_config(page_title="Site Selection Engine — Bogota", layout="wide")
+from src import config
 
-# API_BASE_URL desde secret de Streamlit o variable de entorno (vacio -> fallback local).
-# st.secrets lanza si no existe secrets.toml, por eso se protege con try/except.
-def _get_secret(key: str) -> str:
-    try:
-        return st.secrets.get(key, "")
-    except Exception:
-        return ""
+st.set_page_config(page_title="¿Dónde abre D1 su tienda 167?", layout="wide")
 
+SCORE_COL = config.SERVING_SCORE_COL["v3"]   # score_lookalike_v3
+RANK_COL = "rank_lookalike_v3"
 
-API_BASE_URL = _get_secret("API_BASE_URL") or os.environ.get("API_BASE_URL", "")
-
-MODEL_LABELS = {
-    "v4": "v4 — Look-alike + demografia (DANE/IDECA)",
-    "v3": "v3 — Look-alike + spatial CV",
-    "v2": "v2 — Look-alike (split aleatorio)",
-    "mcda": "v1 — MCDA (sin ML)",
-}
+# Features del panel "por que": (col tecnica, nombre legible, distancia_inversa).
+# distancia_inversa=True -> mas cerca es mejor: ✅ si esta POR DEBAJO del promedio D1.
+FEATURE_SPEC: list[tuple[str, str, bool]] = [
+    ("n_supermercados_500m", "Supermercados en 500m", False),
+    ("dist_supermercado_km", "Distancia al supermercado mas cercano", True),
+    ("n_farmacias_500m", "Farmacias en 500m", False),
+    ("n_colegios_500m", "Colegios en 500m", False),
+    ("n_paradas_bus_500m", "Paradas de bus en 500m", False),
+    ("n_bancos_atm_500m", "Bancos/ATMs en 500m", False),
+    ("densidad_vial", "Densidad de red vial", False),
+    ("viviendas_estimadas", "Viviendas estimadas en la zona", False),
+    ("estrato_promedio", "Estrato promedio", False),
+]
 
 
 # --------------------------------------------------------------------------- #
-# Carga de datos: API primero, fallback a parquet local
+# Carga de datos (parquet/GeoJSON local, cacheada)
 # --------------------------------------------------------------------------- #
-def _api_get(path: str, params: dict | None = None, timeout: float = 8.0):
-    resp = requests.get(f"{API_BASE_URL.rstrip('/')}{path}", params=params, timeout=timeout)
-    resp.raise_for_status()
-    return resp.json()
+@st.cache_data(show_spinner=False)
+def load_ranking() -> pd.DataFrame:
+    path = config.LOOKALIKE_V3_RANKING_PARQUET_PATH
+    if not path.exists():
+        return pd.DataFrame()
+    df = pd.read_parquet(path)
+    return df.rename(columns={SCORE_COL: "score", RANK_COL: "rank"})
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def get_available_models() -> tuple[list[str], str]:
-    """(modelos disponibles, fuente)."""
-    if API_BASE_URL:
-        try:
-            data = _api_get("/models")
-            return data["available"], "api"
-        except requests.RequestException:
-            pass
-    # Fallback local
-    from src import config
-    avail = [m for m, p in config.SERVING_RANKINGS.items() if p.exists()]
-    return avail, "local"
+@st.cache_data(show_spinner=False)
+def load_features() -> pd.DataFrame:
+    path = config.FEATURES_PARQUET_PATH
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(path).set_index("h3_index")
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def load_ranking(model: str, source: str) -> pd.DataFrame:
-    """Ranking normalizado: h3_index, lat_centroid, lon_centroid, score, rank, tiene_d1."""
-    if source == "api":
-        data = _api_get("/hexes", {"model": model})
-        return pd.DataFrame(data["items"])
-    # Fallback local (mismo normalizador que la API)
-    from src.api import service
-    return service.get_ranking(model)
+@st.cache_data(show_spinner=False)
+def load_d1_points() -> pd.DataFrame:
+    path = config.SERVING_POI_LAYERS["d1"]
+    if not path.exists():
+        return pd.DataFrame()
+    gj = json.loads(path.read_text(encoding="utf-8"))
+    rows = [
+        {"lon": f["geometry"]["coordinates"][0], "lat": f["geometry"]["coordinates"][1]}
+        for f in gj["features"] if f["geometry"]["type"] == "Point"
+    ]
+    return pd.DataFrame(rows)
 
 
-def _score_to_color(scores: pd.Series) -> list[list[int]]:
-    """Rampa amarillo->rojo (RGBA) por score normalizado [min,max]."""
+@st.cache_data(show_spinner=False)
+def d1_reference(_features: pd.DataFrame) -> pd.Series:
+    """Promedio de cada feature sobre las zonas que YA tienen D1 (tiene_d1==1)."""
+    cols = [c for c, _, _ in FEATURE_SPEC]
+    return _features.loc[_features["tiene_d1"] == 1, cols].mean()
+
+
+# --------------------------------------------------------------------------- #
+# Helpers de presentacion
+# --------------------------------------------------------------------------- #
+def _score_to_color(scores: pd.Series, alpha: int = 120) -> list[list[int]]:
+    """Rampa gris claro -> naranja -> rojo intenso por score normalizado [min,max]."""
     lo, hi = float(scores.min()), float(scores.max())
     rng = (hi - lo) or 1.0
-    colors = []
+    out = []
     for s in scores:
         t = (s - lo) / rng
-        r = int(255 * (0.2 + 0.8 * t))
-        g = int(255 * (0.9 - 0.7 * t))
-        b = int(60 * (1 - t))
-        colors.append([r, g, b, 170])
-    return colors
+        if t < 0.5:  # gris [200,200,200] -> naranja [255,165,0]
+            u = t / 0.5
+            r, g, b = 200 + 55 * u, 200 - 35 * u, 200 - 200 * u
+        else:        # naranja [255,165,0] -> rojo [220,50,50]
+            u = (t - 0.5) / 0.5
+            r, g, b = 255 - 35 * u, 165 - 115 * u, 50 * u
+        out.append([int(r), int(g), int(b), alpha])
+    return out
+
+
+def _fmt(v: float | None) -> str:
+    if v is None or pd.isna(v):
+        return "s/d"
+    av = abs(v)
+    if av >= 1000:
+        return f"{v:,.0f}"
+    if float(v).is_integer():
+        return f"{int(v)}"
+    if av >= 1:
+        return f"{v:.2f}"
+    return f"{v:.3f}"
 
 
 # --------------------------------------------------------------------------- #
-# UI
+# Carga + validacion
 # --------------------------------------------------------------------------- #
-st.title("🗺️ Site Selection Engine — Bogota")
-st.caption(
-    "Ranking de hexagonos H3 por **similitud look-alike a Tiendas D1**. "
-    "El score es `P(tipo-D1)`: prioridad de exploracion, **no** prediccion de ventas."
-)
+ranking = load_ranking()
+features = load_features()
+d1_points = load_d1_points()
 
-models, source = get_available_models()
-if not models:
+missing = []
+if ranking.empty:
+    missing.append(f"ranking v3 (`{config.LOOKALIKE_V3_RANKING_PARQUET_PATH.name}`)")
+if features.empty:
+    missing.append(f"features (`{config.FEATURES_PARQUET_PATH.name}`)")
+if missing:
     st.error(
-        "No hay rankings disponibles. Corre el pipeline de modelos "
-        "(`uv run python -m src.models.lookalike_v3` / `lookalike_v4`) o configura "
-        "`API_BASE_URL`."
+        "Faltan artefactos para correr el dashboard: " + ", ".join(missing) + ". "
+        "Corre el pipeline: `uv run python -m src.data.features` y "
+        "`uv run python -m src.models.lookalike_v3`."
     )
     st.stop()
 
+ref = d1_reference(features)
+hex1_row = ranking.loc[ranking["rank"] == 1].iloc[0]
+hex1_id = hex1_row["h3_index"]
+hex1_feats = features.loc[hex1_id] if hex1_id in features.index else None
+n_total = len(ranking)
+n_stores = len(d1_points)
+
+# --------------------------------------------------------------------------- #
+# Sidebar (simplificado: v3 fijo de produccion)
+# --------------------------------------------------------------------------- #
 with st.sidebar:
     st.header("Controles")
-    st.caption(f"Fuente de datos: **{'API' if source == 'api' else 'parquet local'}**"
-               + (f" ({API_BASE_URL})" if source == "api" else ""))
-    default_idx = models.index("v4") if "v4" in models else 0
-    model = st.selectbox(
-        "Modelo", models, index=default_idx,
-        format_func=lambda m: MODEL_LABELS.get(m, m),
+    st.caption("Modelo: **v3 — Look-alike + spatial CV** (produccion)")
+    top_k = st.slider(
+        "Hexagonos candidatos coloreados", 50, n_total, min(300, n_total), step=50,
+        help="Cuantos de los mejores hexagonos se colorean de fondo. La recomendacion "
+             "#1 siempre esta destacada.",
     )
-    df = load_ranking(model, source)
+    if "show_alts" not in st.session_state:
+        st.session_state.show_alts = False
+    if st.button("Ver Top 5 alternativas", width="stretch"):
+        st.session_state.show_alts = not st.session_state.show_alts
+    st.caption(f"Fuente: parquet local · {n_total} hexagonos · {n_stores} tiendas D1")
 
-    top_k = st.slider("Top-K hexagonos a mostrar", 50, len(df), min(300, len(df)), step=50)
-    smin, smax = float(df["score"].min()), float(df["score"].max())
-    min_score = st.slider("Score minimo", smin, smax, smin, step=(smax - smin) / 100 or 0.01)
-    show_labels = st.checkbox("Resaltar hexagonos con D1 actual", value=False)
+# --------------------------------------------------------------------------- #
+# Header
+# --------------------------------------------------------------------------- #
+st.title(f"¿Donde deberia abrir D1 su tienda numero {n_stores + 1} en Bogota?")
+st.caption(
+    f"Modelo look-alike entrenado sobre {n_stores} tiendas D1 existentes · "
+    "Score = similitud de entorno, **no** prediccion de ventas."
+)
 
-# Filtro
-view = df[df["score"] >= min_score].sort_values("score", ascending=False).head(top_k).copy()
-view["color"] = _score_to_color(view["score"])
-if show_labels and "tiene_d1" in view.columns:
-    # Borde/tinte para los que ya tienen D1 (verdad de terreno).
-    view["color"] = [
-        [40, 120, 255, 200] if (td == 1) else c
-        for c, td in zip(view["color"], view["tiene_d1"].fillna(0))
-    ]
+# --------------------------------------------------------------------------- #
+# Layout principal 60 / 40
+# --------------------------------------------------------------------------- #
+col_map, col_panel = st.columns([3, 2], gap="medium")
 
-# Mapa
-col_map, col_info = st.columns([3, 1])
+# --- Mapa ---
 with col_map:
-    layer = pdk.Layer(
-        "H3HexagonLayer",
-        data=view,
-        get_hexagon="h3_index",
-        get_fill_color="color",
-        get_line_color=[60, 60, 60, 80],
-        line_width_min_pixels=1,
-        pickable=True,
-        stroked=True,
-        filled=True,
+    bg = ranking.sort_values("score", ascending=False).head(top_k).copy()
+    bg["color"] = _score_to_color(bg["score"], alpha=120)
+    bg_layer = pdk.Layer(
+        "H3HexagonLayer", data=bg, get_hexagon="h3_index",
+        get_fill_color="color", get_line_color=[120, 120, 120, 60],
+        line_width_min_pixels=0.5, pickable=True, stroked=True, filled=True,
         extruded=False,
     )
+
+    hl = ranking.loc[ranking["rank"] == 1].copy()
+    hl_layer = pdk.Layer(
+        "H3HexagonLayer", data=hl, get_hexagon="h3_index",
+        get_fill_color=[220, 50, 50, 255], get_line_color=[255, 255, 255, 255],
+        line_width_min_pixels=3, pickable=True, stroked=True, filled=True,
+        extruded=False,
+    )
+
+    layers = [bg_layer, hl_layer]
+    if not d1_points.empty:
+        layers.append(pdk.Layer(
+            "ScatterplotLayer", data=d1_points, get_position="[lon, lat]",
+            get_fill_color=[30, 100, 220, 200], get_radius=80,
+            radius_min_pixels=2, radius_max_pixels=8, pickable=False,
+        ))
+
     tooltip = {
-        "html": "<b>Rank:</b> {rank}<br/><b>Score:</b> {score}<br/>"
-                "<b>h3:</b> {h3_index}",
+        "html": "<b>Rank:</b> {rank}<br/><b>Score:</b> {score}<br/><b>h3:</b> {h3_index}",
         "style": {"backgroundColor": "#1b1b1b", "color": "white"},
     }
     deck = pdk.Deck(
-        layers=[layer],
-        initial_view_state=pdk.ViewState(latitude=4.65, longitude=-74.10, zoom=10.5, pitch=0),
+        layers=layers,
+        initial_view_state=pdk.ViewState(
+            latitude=float(hex1_row["lat_centroid"]),
+            longitude=float(hex1_row["lon_centroid"]),
+            zoom=13, pitch=0,
+        ),
         map_style="road",
         tooltip=tooltip,
     )
     st.pydeck_chart(deck, width="stretch")
-
-with col_info:
-    st.metric("Hexagonos mostrados", len(view))
-    if "tiene_d1" in view.columns:
-        pos = int(view["tiene_d1"].fillna(0).sum())
-        st.metric(f"De ellos con D1 actual", pos)
-        st.caption(f"Precision en la vista: {pos / len(view):.1%}" if len(view) else "")
     st.caption(
-        "Azul = ya tiene D1 (si el resaltado esta activo). Amarillo→rojo = score "
-        "look-alike creciente."
+        "🔴 Recomendacion #1   🔵 Tiendas D1 actuales "
+        f"({n_stores})   ░ Score bajo → Score alto ░"
     )
 
-st.subheader("Top hexagonos")
-st.dataframe(
-    view[["rank", "h3_index", "lat_centroid", "lon_centroid", "score"]
-         + (["tiene_d1"] if "tiene_d1" in view.columns else [])].head(50),
-    width="stretch", hide_index=True,
-)
+    if st.session_state.show_alts:
+        st.markdown("**Top 5 alternativas (rank 2–6)**")
+        alts = (
+            ranking.loc[ranking["rank"].between(2, 6),
+                        ["rank", "h3_index", "score", "lat_centroid", "lon_centroid"]]
+            .sort_values("rank")
+        )
+        st.dataframe(alts, width="stretch", hide_index=True)
+
+# --- Panel de recomendacion ---
+with col_panel:
+    st.markdown(
+        f"""
+        <div style="background:linear-gradient(135deg,#c0392b,#e74c3c);
+                    padding:18px 20px;border-radius:12px;color:white;">
+          <div style="font-size:14px;letter-spacing:1px;opacity:.9;">🏆 RECOMENDACION #1</div>
+          <div style="font-family:monospace;font-size:13px;margin-top:8px;opacity:.95;">
+            {hex1_id}</div>
+          <div style="font-size:34px;font-weight:700;margin-top:6px;line-height:1;">
+            {hex1_row['score']:.3f}<span style="font-size:16px;font-weight:400;"> / 1.00</span>
+          </div>
+          <div style="font-size:13px;opacity:.9;margin-top:4px;">Score de similitud</div>
+          <div style="font-size:13px;opacity:.9;margin-top:8px;">
+            Rank <b>1</b> de {n_total} hexagonos candidatos</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("#### ¿Por que este hexagono?")
+    st.caption(
+        "Valor del hexagono #1 vs. promedio de las zonas que **ya tienen D1**. "
+        "✅ favorable · ⚠️ por debajo del patron D1."
+    )
+
+    if hex1_feats is None:
+        st.warning("No se encontraron features para el hexagono #1.")
+    else:
+        for tech, label, inverse in FEATURE_SPEC:
+            hv = hex1_feats.get(tech)
+            av = ref.get(tech)
+            if hv is None or av is None or pd.isna(hv) or pd.isna(av):
+                emoji = "•"
+            else:
+                better = (hv < av) if inverse else (hv > av)
+                emoji = "✅" if better else "⚠️"
+            st.markdown(
+                f"{emoji}&nbsp; **{label}**  \n"
+                f"<span style='color:#888'>"
+                f"{_fmt(hv)} &nbsp;·&nbsp; promedio D1: {_fmt(av)}</span>",
+                unsafe_allow_html=True,
+            )
+
+    st.warning(
+        "Este score mide **similitud de entorno** con tiendas D1 existentes, no predice "
+        "rentabilidad. Usar como punto de partida para analisis de campo, no como "
+        "decision final."
+    )

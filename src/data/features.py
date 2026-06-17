@@ -22,10 +22,13 @@ logger = get_logger(__name__)
 
 # Columnas candidatas de poblacion/vivienda en el MGN-CNPV 2018 (varian por version).
 CENSO_POP_CANDIDATES = ["stp27_pers", "tp27_perso", "personas", "poblacion", "tp34_1_se"]
-CENSO_VIV_CANDIDATES = ["tp19_ee_e1", "viviendas", "tp16_hog", "tp9_1_uso", "stp19_vivi"]
-# Columna candidata de estrato (1-6) en la capa de IDECA/SDP (varia por version).
+# manz_viv = viviendas por manzana en el MGN-CNPV 2018 (capa de manzanas SHP/GPKG de DANE).
+# El MGN base no incluye conteo de personas a nivel manzana; poblacion_estimada quedara NULL.
+CENSO_VIV_CANDIDATES = ["manz_viv", "tp19_ee_e1", "viviendas", "tp16_hog", "tp9_1_uso", "stp19_vivi"]
+# ESTRATO (mayusculas): nombre real en PostgreSQL cuando la capa IDECA se carga con
+# geopandas/to_postgis preservando mayusculas — columna creada como "ESTRATO" (quoted).
 ESTRATO_COL_CANDIDATES = [
-    "estrato", "estrato_ur", "cod_estrat", "codigo_estrato", "estrato_no",
+    "ESTRATO", "estrato", "estrato_ur", "cod_estrat", "codigo_estrato", "estrato_no",
 ]
 
 # Lista canonica de features numericas para el resumen.
@@ -54,11 +57,16 @@ def _table_exists(engine: Engine, table: str) -> bool:
 
 
 def _detect_column(engine: Engine, table: str, candidates: list[str]) -> str | None:
+    """Retorna el nombre REAL de la columna en la BD (con su casing exacto).
+
+    Compara contra los candidatos en minusculas, pero devuelve el nombre original
+    de la BD para que el SQL lo pueda citar correctamente con comillas dobles.
+    """
     with engine.connect() as conn:
-        cols = {r[0].lower() for r in conn.execute(text(
+        actual = {r[0].lower(): r[0] for r in conn.execute(text(
             "SELECT column_name FROM information_schema.columns WHERE table_name = :t"
         ), {"t": table})}
-    return next((c for c in candidates if c.lower() in cols), None)
+    return next((actual[c.lower()] for c in candidates if c.lower() in actual), None)
 
 
 # --------------------------------------------------------------------------- #
@@ -169,12 +177,14 @@ def build_features_sql(engine: Engine) -> str:
 
 def _prorate_sum_expr(table: str, col: str | None, alias: str) -> str:
     """Prorrateo de una magnitud EXTENSIVA (poblacion, viviendas): suma ponderada por
-    la fraccion de cada manzana que cae dentro del hexagono. Sin doble conteo."""
+    la fraccion de cada manzana que cae dentro del hexagono. Sin doble conteo.
+    El nombre de columna se cita con comillas dobles para soportar tanto nombres
+    lowercase (manz_viv) como uppercase preservado por geopandas/to_postgis."""
     if col is None:
         return f"NULL::double precision AS {alias}"
     return f"""
     (SELECT COALESCE(SUM(
-        m.{col}::double precision
+        m."{col}"::double precision
         * ST_Area(ST_Intersection(m.geom, g.geom)::geography)
         / NULLIF(ST_Area(m.geom::geography), 0)
      ), 0)
@@ -185,18 +195,19 @@ def _prorate_sum_expr(table: str, col: str | None, alias: str) -> str:
 def _prorate_avg_expr(table: str, col: str | None, alias: str) -> str:
     """Promedio ponderado de una magnitud INTENSIVA (estrato 1-6): media de los valores
     de manzana ponderada por el area de interseccion con el hexagono. Se descartan
-    valores <=0 (no residencial / sin estrato). Devuelve NULL si no hay manzana valida."""
+    valores <=0 (no residencial / sin estrato). Devuelve NULL si no hay manzana valida.
+    El nombre de columna se cita con comillas dobles (soporta uppercase de IDECA)."""
     if col is None:
         return f"NULL::double precision AS {alias}"
     return f"""
-    (SELECT SUM(m.{col}::double precision * a) / NULLIF(SUM(a), 0)
+    (SELECT SUM(m."{col}"::double precision * a) / NULLIF(SUM(a), 0)
      FROM (
-        SELECT mm.{col},
+        SELECT mm."{col}",
                ST_Area(ST_Intersection(mm.geom, g.geom)::geography) AS a
         FROM {table} mm
         WHERE ST_Intersects(mm.geom, g.geom)
-          AND mm.{col} IS NOT NULL
-          AND mm.{col}::double precision > 0
+          AND mm."{col}" IS NOT NULL
+          AND mm."{col}"::double precision > 0
      ) m) AS {alias}"""
 
 
