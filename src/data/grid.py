@@ -1,13 +1,13 @@
-"""ETAPA 2 — Grid hexagonal H3 sobre Bogota.
+"""STAGE 2 — H3 hexagonal grid over Bogota.
 
-Genera el grid H3 (resolucion configurable, por defecto 9 ~ 0.105 km2) que cubre
-el limite administrativo de Bogota, conservando solo los hexagonos cuyo centroide
-cae dentro del poligono. Guarda el grid y reporta cuantos hexagonos contienen al
-menos un POI D1 (positivos disponibles antes de spatial CV).
+Generates the H3 grid (configurable resolution, default 9 ~ 0.105 km2) covering
+Bogota's administrative boundary, keeping only the hexagons whose centroid
+falls within the polygon. Saves the grid and reports how many hexagons contain
+at least one D1 POI (positives available before spatial CV).
 
-Usa la API de h3 v4 (LatLngPoly, polygon_to_cells, cell_to_boundary, cell_to_latlng).
+Uses the h3 v4 API (LatLngPoly, polygon_to_cells, cell_to_boundary, cell_to_latlng).
 
-Ejecutar de forma independiente:
+Run standalone:
     uv run python -m src.data.grid
 """
 
@@ -24,8 +24,8 @@ logger = get_logger(__name__)
 
 
 def _polygon_to_cells(poly: Polygon, resolution: int) -> set[str]:
-    """Devuelve las celdas H3 que cubren un Polygon shapely (coords lon/lat)."""
-    # h3.LatLngPoly espera vertices en orden (lat, lng).
+    """Returns the H3 cells that cover a shapely Polygon (lon/lat coords)."""
+    # h3.LatLngPoly expects vertices in (lat, lng) order.
     outer = [(lat, lng) for lng, lat in poly.exterior.coords]
     holes = [
         [(lat, lng) for lng, lat in interior.coords]
@@ -36,7 +36,7 @@ def _polygon_to_cells(poly: Polygon, resolution: int) -> set[str]:
 
 
 def _cells_covering(geometry, resolution: int) -> set[str]:
-    """Celdas H3 que cubren un Polygon o MultiPolygon."""
+    """H3 cells that cover a Polygon or MultiPolygon."""
     polygons = geometry.geoms if isinstance(geometry, MultiPolygon) else [geometry]
     cells: set[str] = set()
     for poly in polygons:
@@ -45,20 +45,20 @@ def _cells_covering(geometry, resolution: int) -> set[str]:
 
 
 def _cell_to_polygon(cell: str) -> Polygon:
-    """Construye el poligono shapely (lon/lat) de una celda H3."""
-    boundary = h3.cell_to_boundary(cell)  # secuencia de (lat, lng)
+    """Builds the shapely polygon (lon/lat) for an H3 cell."""
+    boundary = h3.cell_to_boundary(cell)  # sequence of (lat, lng)
     return Polygon([(lng, lat) for lat, lng in boundary])
 
 
 def build_grid() -> gpd.GeoDataFrame:
-    """Construye el grid H3 filtrado por centroide dentro del limite."""
+    """Builds the H3 grid filtered by centroid within the boundary."""
     boundary = gpd.read_file(config.BOUNDARY_PATH)
     geometry = boundary.geometry.iloc[0]
 
     cells = _cells_covering(geometry, config.H3_RESOLUTION)
-    logger.info("Celdas H3 que cubren el bbox del limite: %d", len(cells))
+    logger.info("H3 cells covering the boundary bbox: %d", len(cells))
 
-    # Preparar el poligono unido para el test de contencion del centroide.
+    # Prepare the unioned polygon for the centroid containment test.
     boundary_union = boundary.geometry.union_all() if hasattr(
         boundary.geometry, "union_all"
     ) else boundary.geometry.unary_union
@@ -76,14 +76,14 @@ def build_grid() -> gpd.GeoDataFrame:
         })
 
     grid = gpd.GeoDataFrame(records, geometry="geometry", crs="EPSG:4326")
-    logger.info("Hexagonos con centroide dentro de Bogota: %d", len(grid))
+    logger.info("Hexagons with centroid inside Bogota: %d", len(grid))
     return grid
 
 
 def count_positives(grid: gpd.GeoDataFrame) -> int:
-    """Cuenta hexagonos que contienen al menos un POI D1 (positivos)."""
+    """Counts hexagons that contain at least one D1 POI (positives)."""
     if not config.POIS_D1_PATH.exists():
-        logger.warning("No existe %s; no se cuentan positivos", config.POIS_D1_PATH.name)
+        logger.warning("%s does not exist; positives will not be counted", config.POIS_D1_PATH.name)
         return -1
     d1 = gpd.read_file(config.POIS_D1_PATH)
     joined = gpd.sjoin(d1, grid[["h3_index", "geometry"]], predicate="within", how="inner")
@@ -95,15 +95,15 @@ def main() -> None:
 
     grid = build_grid()
     grid.to_file(config.GRID_PATH, driver="GeoJSON")
-    logger.info("Grid guardado -> %s", config.GRID_PATH.name)
+    logger.info("Grid saved -> %s", config.GRID_PATH.name)
 
     n_total = len(grid)
     n_pos = count_positives(grid)
     logger.info("=" * 50)
-    logger.info("Total hexagonos:            %d", n_total)
-    logger.info("Hexagonos con D1 (positivos antes de spatial CV): %d", n_pos)
+    logger.info("Total hexagons:            %d", n_total)
+    logger.info("Hexagons with D1 (positives before spatial CV): %d", n_pos)
     if n_pos > 0:
-        logger.info("Ratio positivos:            %.3f%%", 100 * n_pos / n_total)
+        logger.info("Positive ratio:            %.3f%%", 100 * n_pos / n_total)
     logger.info("=" * 50)
 
 

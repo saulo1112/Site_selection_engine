@@ -1,25 +1,25 @@
-"""Chequeo de disponibilidad de datos para elegir la ciudad de estudio.
+"""Data availability check for choosing the study city.
 
-Replica el rigor del chequeo de AOI del proyecto EUDR: en vez de decidir "a ojo",
-mide la senal disponible con datos reales.
+Replicates the rigor of the EUDR project's AOI check: instead of deciding "by eye",
+it measures the available signal with real data.
 
-Por cada ciudad candidata (Bogota, Cali, Medellin, Barranquilla):
-  1. Resuelve su frontera administrativa OSM (relation id via Nominatim, con
-     fallback hardcoded en config) -> transparencia: se loguea el id usado.
-  2. Cuenta via Overpass:
-       - tiendas D1   (shop=supermarket + brand=D1)        -> senal look-alike
-       - tiendas D1 por nombre (verificacion cruzada)
-       - tiendas Ara  (respaldo si D1 es escaso)
-       - total shop=* (densidad general de etiquetado OSM)
-  3. Calcula metricas derivadas (ratio D1/shops, viabilidad de positivos).
-  4. Guarda respuestas crudas en data/raw/ y escribe una tabla comparativa en
-     docs/seleccion_area_estudio.md (entre marcadores autogenerados).
+For each candidate city (Bogota, Cali, Medellin, Barranquilla):
+  1. Resolves its administrative OSM boundary (relation id via Nominatim, with a
+     hardcoded fallback in config) -> transparency: the id used is logged.
+  2. Counts via Overpass:
+       - D1 stores   (shop=supermarket + brand=D1)        -> look-alike signal
+       - D1 stores by name (cross-check)
+       - Ara stores  (backup if D1 is scarce)
+       - total shop=* (general density of OSM tagging)
+  3. Computes derived metrics (D1/shops ratio, viability of positives).
+  4. Saves raw responses to data/raw/ and writes a comparison table in
+     docs/seleccion_area_estudio.md (between auto-generated markers).
 
-La verificacion de fuentes DANE/estrato es documental (se hace por web y se
-registra a mano en docs/seleccion_area_estudio.md), no programatica: el CNPV/MGN
-cubre las 4 ciudades de forma uniforme a nivel manzana, asi que no discrimina.
+Verification of DANE/stratum sources is documentary (done via the web and recorded
+by hand in docs/seleccion_area_estudio.md), not programmatic: CNPV/MGN covers all 4
+cities uniformly at the city-block level, so it isn't a discriminating factor.
 
-Uso:
+Usage:
     uv run python -m src.selection.data_availability_check
 """
 
@@ -36,12 +36,12 @@ from src import config
 
 
 # --------------------------------------------------------------------------- #
-# Utilidades de red
+# Network utilities
 # --------------------------------------------------------------------------- #
 def resolve_relation_id(city: str, spec: dict) -> int:
-    """Resuelve el OSM relation id de una ciudad via Nominatim.
+    """Resolves a city's OSM relation id via Nominatim.
 
-    Usa el fallback de config si Nominatim falla o no devuelve una relacion.
+    Uses the config fallback if Nominatim fails or doesn't return a relation.
     """
     params = {
         "q": spec["nominatim_query"],
@@ -64,16 +64,16 @@ def resolve_relation_id(city: str, spec: dict) -> int:
                 rid = int(r["osm_id"])
                 print(f"  [{city}] Nominatim -> relation {rid} ({r.get('display_name', '')[:60]})")
                 return rid
-        print(f"  [{city}] Nominatim no devolvio relacion; uso fallback {spec['osm_relation_id']}")
+        print(f"  [{city}] Nominatim did not return a relation; using fallback {spec['osm_relation_id']}")
     except (requests.RequestException, ValueError, KeyError) as exc:
-        print(f"  [{city}] Nominatim fallo ({exc}); uso fallback {spec['osm_relation_id']}")
+        print(f"  [{city}] Nominatim failed ({exc}); using fallback {spec['osm_relation_id']}")
     return int(spec["osm_relation_id"])
 
 
 def overpass_count(query_body: str) -> int:
-    """Ejecuta una consulta Overpass `out count;` y devuelve el conteo total.
+    """Runs an Overpass `out count;` query and returns the total count.
 
-    Rota endpoints y reintenta con backoff exponencial ante errores transitorios.
+    Rotates endpoints and retries with exponential backoff on transient errors.
     """
     full_query = f"[out:json][timeout:{config.REQUEST_TIMEOUT}];({query_body});out count;"
     headers = {"User-Agent": config.USER_AGENT}
@@ -90,23 +90,23 @@ def overpass_count(query_body: str) -> int:
             )
             resp.raise_for_status()
             payload = resp.json()
-            # `out count;` devuelve un elemento type=count con tags.total
+            # `out count;` returns a type=count element with tags.total
             for el in payload.get("elements", []):
                 if el.get("type") == "count":
                     return int(el["tags"]["total"])
-            # Fallback: si no hay elemento count, contar elementos.
+            # Fallback: if there is no count element, count the elements.
             return len(payload.get("elements", []))
         except (requests.RequestException, ValueError, KeyError) as exc:
             last_exc = exc
             wait = config.BACKOFF_BASE * (2 ** attempt)
-            print(f"    intento {attempt + 1}/{config.MAX_RETRIES} fallo en {endpoint} "
-                  f"({type(exc).__name__}); reintento en {wait}s")
+            print(f"    attempt {attempt + 1}/{config.MAX_RETRIES} failed on {endpoint} "
+                  f"({type(exc).__name__}); retrying in {wait}s")
             time.sleep(wait)
-    raise RuntimeError(f"Overpass fallo tras {config.MAX_RETRIES} intentos: {last_exc}")
+    raise RuntimeError(f"Overpass failed after {config.MAX_RETRIES} attempts: {last_exc}")
 
 
 # --------------------------------------------------------------------------- #
-# Chequeo por ciudad
+# Per-city check
 # --------------------------------------------------------------------------- #
 def check_city(city: str, spec: dict) -> dict:
     print(f"\n=== {city} ===")
@@ -126,7 +126,7 @@ def check_city(city: str, spec: dict) -> dict:
     raw["counts"] = counts
     raw["fetched_at_utc"] = datetime.now(timezone.utc).isoformat()
 
-    # Guardar crudo
+    # Save raw data
     config.DATA_RAW.mkdir(parents=True, exist_ok=True)
     out_path = config.DATA_RAW / f"overpass_{city.lower()}.json"
     out_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -134,26 +134,26 @@ def check_city(city: str, spec: dict) -> dict:
     d1 = counts["d1"]
     shops = counts["shops_total"]
     return {
-        "Ciudad": city,
+        "City": city,
         "relation_id": relation_id,
         "D1 (brand)": d1,
-        "D1 (por nombre)": counts["d1_by_name"],
+        "D1 (by name)": counts["d1_by_name"],
         "Ara": counts["ara"],
         "Total shop=*": shops,
-        "Ratio D1/shops (%)": round(100 * d1 / shops, 2) if shops else 0.0,
-        "Positivos viables": "Si" if d1 >= config.MIN_D1_VIABLE else "Riesgo",
+        "D1/shops ratio (%)": round(100 * d1 / shops, 2) if shops else 0.0,
+        "Viable positives": "Yes" if d1 >= config.MIN_D1_VIABLE else "At risk",
     }
 
 
 # --------------------------------------------------------------------------- #
-# Escritura del informe
+# Report writing
 # --------------------------------------------------------------------------- #
 MARKER_START = "<!-- AUTO-GENERATED:OVERPASS_TABLE:START -->"
 MARKER_END = "<!-- AUTO-GENERATED:OVERPASS_TABLE:END -->"
 
 
 def write_table_to_doc(df: pd.DataFrame) -> None:
-    """Inserta/actualiza la tabla comparativa entre marcadores en el doc."""
+    """Inserts/updates the comparison table between markers in the doc."""
     config.DOCS.mkdir(parents=True, exist_ok=True)
     doc_path = config.DOCS / "seleccion_area_estudio.md"
 
@@ -161,10 +161,10 @@ def write_table_to_doc(df: pd.DataFrame) -> None:
     table_md = df.to_markdown(index=False)
     block = (
         f"{MARKER_START}\n"
-        f"\n_Generado por `src/selection/data_availability_check.py` el {stamp}._\n\n"
+        f"\n_Generated by `src/selection/data_availability_check.py` on {stamp}._\n\n"
         f"{table_md}\n\n"
-        f"_Umbral de positivos viables: D1 >= {config.MIN_D1_VIABLE} "
-        f"(margen para separacion espacial en v3)._\n"
+        f"_Viable-positives threshold: D1 >= {config.MIN_D1_VIABLE} "
+        f"(margin for spatial separation in v3)._\n"
         f"{MARKER_END}"
     )
 
@@ -174,11 +174,11 @@ def write_table_to_doc(df: pd.DataFrame) -> None:
         post = text.split(MARKER_END)[1] if MARKER_END in text else ""
         doc_path.write_text(pre + block + post, encoding="utf-8")
     else:
-        # Si el doc aun no tiene el bloque, solo se escribe la tabla;
-        # la narrativa la completa el autor alrededor de los marcadores.
-        header = "# Seleccion del area de estudio\n\n"
+        # If the doc doesn't have the block yet, only the table is written;
+        # the author fills in the narrative around the markers.
+        header = "# Study area selection\n\n"
         doc_path.write_text(header + block + "\n", encoding="utf-8")
-    print(f"\nTabla escrita en {doc_path}")
+    print(f"\nTable written to {doc_path}")
 
 
 def main() -> None:

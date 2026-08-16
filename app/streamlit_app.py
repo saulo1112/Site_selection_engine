@@ -1,18 +1,19 @@
-"""Frontend del Site Selection Engine — narrativa de decision para expansion D1.
+"""Site Selection Engine frontend — decision narrative for D1 expansion.
 
-Cuenta una historia en 3 golpes: (1) donde estan las tiendas D1 hoy, (2) cual es
-LA recomendacion #1 para la proxima apertura, (3) por que ese hexagono, comparando
-sus features contra el promedio de las zonas que ya tienen D1.
+Tells a story in 3 beats: (1) where D1 stores are today, (2) what is
+THE #1 recommendation for the next opening, (3) why that hexagon, comparing
+its features against the average of the zones that already have D1.
 
-Lee directamente los artefactos locales (parquet + GeoJSON) — sin API, mas simple y
-robusto para la demo. El mapa usa pydeck: H3HexagonLayer para el score de fondo,
-una capa destacada para el hexagono #1, y ScatterplotLayer para las tiendas actuales.
+Reads local artifacts directly (parquet + GeoJSON) — no API, simpler and
+more robust for the demo. The map uses pydeck: H3HexagonLayer for the
+background score, a highlighted layer for hexagon #1, and ScatterplotLayer
+for the current stores.
 
-Ejecutar local:
+Run locally:
     uv run streamlit run app/streamlit_app.py
 
-Despliegue: Streamlit Community Cloud (app principal = app/streamlit_app.py). Los
-rankings/parquet/GeoJSON van versionados en git (ver docs/despliegue.md).
+Deployment: Streamlit Community Cloud (main app = app/streamlit_app.py). The
+rankings/parquet/GeoJSON are versioned in git (see docs/despliegue.md).
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import json
 import sys
 from pathlib import Path
 
-# Raiz del proyecto en sys.path, independiente del cwd desde el que se lance streamlit.
+# Project root on sys.path, independent of the cwd streamlit is launched from.
 _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -32,28 +33,28 @@ import streamlit as st
 
 from src import config
 
-st.set_page_config(page_title="¿Dónde abre D1 su tienda 167?", layout="wide")
+st.set_page_config(page_title="Where should D1 open its 167th store?", layout="wide")
 
 SCORE_COL = config.SERVING_SCORE_COL["v3"]   # score_lookalike_v3
 RANK_COL = "rank_lookalike_v3"
 
-# Features del panel "por que": (col tecnica, nombre legible, distancia_inversa).
-# distancia_inversa=True -> mas cerca es mejor: ✅ si esta POR DEBAJO del promedio D1.
+# Features for the "why" panel: (technical col, readable name, inverse_distance).
+# inverse_distance=True -> closer is better.
 FEATURE_SPEC: list[tuple[str, str, bool]] = [
-    ("n_supermercados_500m", "Supermercados en 500m", False),
-    ("dist_supermercado_km", "Distancia al supermercado mas cercano", True),
-    ("n_farmacias_500m", "Farmacias en 500m", False),
-    ("n_colegios_500m", "Colegios en 500m", False),
-    ("n_paradas_bus_500m", "Paradas de bus en 500m", False),
-    ("n_bancos_atm_500m", "Bancos/ATMs en 500m", False),
-    ("densidad_vial", "Densidad de red vial", False),
-    ("viviendas_estimadas", "Viviendas estimadas en la zona", False),
-    ("estrato_promedio", "Estrato promedio", False),
+    ("n_supermercados_500m", "Supermarkets within 500m", False),
+    ("dist_supermercado_km", "Distance to nearest supermarket", True),
+    ("n_farmacias_500m", "Pharmacies within 500m", False),
+    ("n_colegios_500m", "Schools within 500m", False),
+    ("n_paradas_bus_500m", "Bus stops within 500m", False),
+    ("n_bancos_atm_500m", "Banks/ATMs within 500m", False),
+    ("densidad_vial", "Road network density", False),
+    ("viviendas_estimadas", "Estimated households in the zone", False),
+    ("estrato_promedio", "Average socioeconomic stratum", False),
 ]
 
 
 # --------------------------------------------------------------------------- #
-# Carga de datos (parquet/GeoJSON local, cacheada)
+# Data loading (local parquet/GeoJSON, cached)
 # --------------------------------------------------------------------------- #
 @st.cache_data(show_spinner=False)
 def load_ranking() -> pd.DataFrame:
@@ -87,25 +88,25 @@ def load_d1_points() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def d1_reference(_features: pd.DataFrame) -> pd.Series:
-    """Promedio de cada feature sobre las zonas que YA tienen D1 (tiene_d1==1)."""
+    """Average of each feature over the zones that ALREADY have D1 (tiene_d1==1)."""
     cols = [c for c, _, _ in FEATURE_SPEC]
     return _features.loc[_features["tiene_d1"] == 1, cols].mean()
 
 
 # --------------------------------------------------------------------------- #
-# Helpers de presentacion
+# Presentation helpers
 # --------------------------------------------------------------------------- #
 def _score_to_color(scores: pd.Series, alpha: int = 120) -> list[list[int]]:
-    """Rampa gris claro -> naranja -> rojo intenso por score normalizado [min,max]."""
+    """Light gray -> orange -> intense red ramp over the normalized [min,max] score."""
     lo, hi = float(scores.min()), float(scores.max())
     rng = (hi - lo) or 1.0
     out = []
     for s in scores:
         t = (s - lo) / rng
-        if t < 0.5:  # gris [200,200,200] -> naranja [255,165,0]
+        if t < 0.5:  # gray [200,200,200] -> orange [255,165,0]
             u = t / 0.5
             r, g, b = 200 + 55 * u, 200 - 35 * u, 200 - 200 * u
-        else:        # naranja [255,165,0] -> rojo [220,50,50]
+        else:        # orange [255,165,0] -> red [220,50,50]
             u = (t - 0.5) / 0.5
             r, g, b = 255 - 35 * u, 165 - 115 * u, 50 * u
         out.append([int(r), int(g), int(b), alpha])
@@ -114,7 +115,7 @@ def _score_to_color(scores: pd.Series, alpha: int = 120) -> list[list[int]]:
 
 def _fmt(v: float | None) -> str:
     if v is None or pd.isna(v):
-        return "s/d"
+        return "n/a"
     av = abs(v)
     if av >= 1000:
         return f"{v:,.0f}"
@@ -126,7 +127,7 @@ def _fmt(v: float | None) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Carga + validacion
+# Load + validate
 # --------------------------------------------------------------------------- #
 ranking = load_ranking()
 features = load_features()
@@ -134,13 +135,13 @@ d1_points = load_d1_points()
 
 missing = []
 if ranking.empty:
-    missing.append(f"ranking v3 (`{config.LOOKALIKE_V3_RANKING_PARQUET_PATH.name}`)")
+    missing.append(f"v3 ranking (`{config.LOOKALIKE_V3_RANKING_PARQUET_PATH.name}`)")
 if features.empty:
     missing.append(f"features (`{config.FEATURES_PARQUET_PATH.name}`)")
 if missing:
     st.error(
-        "Faltan artefactos para correr el dashboard: " + ", ".join(missing) + ". "
-        "Corre el pipeline: `uv run python -m src.data.features` y "
+        "Missing artifacts to run the dashboard: " + ", ".join(missing) + ". "
+        "Run the pipeline: `uv run python -m src.data.features` and "
         "`uv run python -m src.models.lookalike_v3`."
     )
     st.stop()
@@ -153,37 +154,40 @@ n_total = len(ranking)
 n_stores = len(d1_points)
 
 # --------------------------------------------------------------------------- #
-# Sidebar (simplificado: v3 fijo de produccion)
+# Sidebar (simplified: v3 fixed as production model)
 # --------------------------------------------------------------------------- #
 with st.sidebar:
-    st.header("Controles")
-    st.caption("Modelo: **v3 — Look-alike + spatial CV** (produccion)")
+    st.header("Controls")
+    st.caption("Model: **v3 — Look-alike + spatial CV** (production)")
     top_k = st.slider(
-        "Hexagonos candidatos coloreados", 50, n_total, min(300, n_total), step=50,
-        help="Cuantos de los mejores hexagonos se colorean de fondo. La recomendacion "
-             "#1 siempre esta destacada.",
+        "Colored candidate hexagons", 50, n_total, min(300, n_total), step=50,
+        help="How many of the top hexagons are colored in the background. The #1 "
+             "recommendation is always highlighted.",
     )
-    if "show_alts" not in st.session_state:
-        st.session_state.show_alts = False
-    if st.button("Ver Top 5 alternativas", width="stretch"):
-        st.session_state.show_alts = not st.session_state.show_alts
-    st.caption(f"Fuente: parquet local · {n_total} hexagonos · {n_stores} tiendas D1")
+    with st.expander("Top 5 alternatives (rank 2–6)"):
+        alts = (
+            ranking.loc[ranking["rank"].between(2, 6),
+                        ["rank", "h3_index", "score", "lat_centroid", "lon_centroid"]]
+            .sort_values("rank")
+        )
+        st.dataframe(alts, width="stretch", hide_index=True)
+    st.caption(f"Source: local parquet · {n_total} hexagons · {n_stores} D1 stores")
 
 # --------------------------------------------------------------------------- #
 # Header
 # --------------------------------------------------------------------------- #
-st.title(f"¿Donde deberia abrir D1 su tienda numero {n_stores + 1} en Bogota?")
+st.title(f"Where should D1 open its store number {n_stores + 1} in Bogota?")
 st.caption(
-    f"Modelo look-alike entrenado sobre {n_stores} tiendas D1 existentes · "
-    "Score = similitud de entorno, **no** prediccion de ventas."
+    f"Look-alike model trained on {n_stores} existing D1 stores · "
+    "Score = environment similarity, **not** a sales prediction."
 )
 
 # --------------------------------------------------------------------------- #
-# Layout principal 60 / 40
+# Main layout 60 / 40
 # --------------------------------------------------------------------------- #
 col_map, col_panel = st.columns([3, 2], gap="medium")
 
-# --- Mapa ---
+# --- Map ---
 with col_map:
     bg = ranking.sort_values("score", ascending=False).head(top_k).copy()
     bg["color"] = _score_to_color(bg["score"], alpha=120)
@@ -226,47 +230,38 @@ with col_map:
     )
     st.pydeck_chart(deck, width="stretch")
     st.caption(
-        "🔴 Recomendacion #1   🔵 Tiendas D1 actuales "
-        f"({n_stores})   ░ Score bajo → Score alto ░"
+        "🔴 #1 recommendation   🔵 Current D1 stores "
+        f"({n_stores})   ░ Low score → High score ░"
     )
 
-    if st.session_state.show_alts:
-        st.markdown("**Top 5 alternativas (rank 2–6)**")
-        alts = (
-            ranking.loc[ranking["rank"].between(2, 6),
-                        ["rank", "h3_index", "score", "lat_centroid", "lon_centroid"]]
-            .sort_values("rank")
-        )
-        st.dataframe(alts, width="stretch", hide_index=True)
-
-# --- Panel de recomendacion ---
+# --- Recommendation panel ---
 with col_panel:
     st.markdown(
         f"""
         <div style="background:linear-gradient(135deg,#c0392b,#e74c3c);
                     padding:18px 20px;border-radius:12px;color:white;">
-          <div style="font-size:14px;letter-spacing:1px;opacity:.9;">🏆 RECOMENDACION #1</div>
+          <div style="font-size:14px;letter-spacing:1px;opacity:.9;">🏆 #1 RECOMMENDATION</div>
           <div style="font-family:monospace;font-size:13px;margin-top:8px;opacity:.95;">
             {hex1_id}</div>
           <div style="font-size:34px;font-weight:700;margin-top:6px;line-height:1;">
             {hex1_row['score']:.3f}<span style="font-size:16px;font-weight:400;"> / 1.00</span>
           </div>
-          <div style="font-size:13px;opacity:.9;margin-top:4px;">Score de similitud</div>
+          <div style="font-size:13px;opacity:.9;margin-top:4px;">Similarity score</div>
           <div style="font-size:13px;opacity:.9;margin-top:8px;">
-            Rank <b>1</b> de {n_total} hexagonos candidatos</div>
+            Rank <b>1</b> of {n_total} candidate hexagons</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown("#### ¿Por que este hexagono?")
+    st.markdown("#### Why this hexagon?")
     st.caption(
-        "Valor del hexagono #1 vs. promedio de las zonas que **ya tienen D1**. "
-        "✅ favorable · ⚠️ por debajo del patron D1."
+        "Value of hexagon #1 vs. average of the zones that **already have D1**. "
+        "✅ favorable · ⚠️ below the D1 pattern."
     )
 
     if hex1_feats is None:
-        st.warning("No se encontraron features para el hexagono #1.")
+        st.warning("No features were found for hexagon #1.")
     else:
         for tech, label, inverse in FEATURE_SPEC:
             hv = hex1_feats.get(tech)
@@ -279,12 +274,12 @@ with col_panel:
             st.markdown(
                 f"{emoji}&nbsp; **{label}**  \n"
                 f"<span style='color:#888'>"
-                f"{_fmt(hv)} &nbsp;·&nbsp; promedio D1: {_fmt(av)}</span>",
+                f"{_fmt(hv)} &nbsp;·&nbsp; D1 average: {_fmt(av)}</span>",
                 unsafe_allow_html=True,
             )
 
     st.warning(
-        "Este score mide **similitud de entorno** con tiendas D1 existentes, no predice "
-        "rentabilidad. Usar como punto de partida para analisis de campo, no como "
-        "decision final."
+        "This score measures **environment similarity** to existing D1 stores, it does "
+        "not predict profitability. Use it as a starting point for field analysis, not "
+        "as a final decision."
     )

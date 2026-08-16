@@ -1,4 +1,4 @@
-# Configuracion del frontend Streamlit.
+# Streamlit frontend configuration.
 [theme]
 base = "light"
 primaryColor = "#e23b3b"

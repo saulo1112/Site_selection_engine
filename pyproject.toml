@@ -1,43 +1,43 @@
 [project]
 name = "site-selection-engine"
 version = "0.1.0"
-description = "Ranking de ubicaciones candidatas (grid H3) para expansion retail/franquicias en Colombia, con enfoque look-alike sobre Tiendas D1 (OSM + DANE + accesibilidad vial)."
+description = "Ranking of candidate locations (H3 grid) for retail/franchise expansion in Colombia, using a look-alike approach on D1 Stores (OSM + DANE + road accessibility)."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     # --- Tabular ---
     "pandas>=2.0",
     "numpy>=1.24",
-    # --- Geoespacial core ---
+    # --- Geospatial core ---
     "geopandas>=0.14",
     "shapely>=2.0",
     "pyproj>=3.6",
     "fiona>=1.9",
-    # --- Grid hexagonal (unidad de analisis) ---
+    # --- Hexagonal grid (unit of analysis) ---
     "h3>=4.0",
-    # --- OSM / Overpass + red vial ---
+    # --- OSM / Overpass + road network ---
     "requests>=2.31",
     "osmnx>=1.9",
     # --- ML (v2/v3) ---
     "scikit-learn>=1.4",
-    # --- Base de datos espacial (PostGIS) ---
+    # --- Spatial database (PostGIS) ---
     "sqlalchemy>=2.0",
     "psycopg2-binary>=2.9",
     "geoalchemy2>=0.15",
-    # --- IO columnar (features.parquet) ---
+    # --- Columnar IO (features.parquet) ---
     "pyarrow>=15.0",
-    # --- Visualizacion exploratoria ---
+    # --- Exploratory visualization ---
     "matplotlib>=3.8",
     "folium>=0.16",
-    # --- Utilidades ---
+    # --- Utilities ---
     "tqdm>=4.66",
     "python-dotenv>=1.0",
     "tabulate>=0.9",
-    # --- Serving / API (capa de inferencia, desacoplada de PostGIS) ---
+    # --- Serving / API (inference layer, decoupled from PostGIS) ---
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "pydantic>=2.0",
-    # --- Frontend (mapa interactivo de hexagonos) ---
+    # --- Frontend (interactive hexagon map) ---
     "streamlit>=1.33",
     "pydeck>=0.9",
 ]
@@ -48,11 +48,11 @@ dev = [
     "ipykernel>=6.29",
 ]
 
-# Stack de despliegue DECIDIDO: hibrido FastAPI (serving) + Streamlit/pydeck (UI),
-# con demo en vivo. El serving lee artefactos versionados (rankings parquet, .joblib,
-# GeoJSON de POIs); PostGIS solo se usa en el ETL local. Ver docs/despliegue.md.
+# DECIDED deployment stack: hybrid FastAPI (serving) + Streamlit/pydeck (UI),
+# with a live demo. Serving reads versioned artifacts (parquet rankings, .joblib,
+# GeoJSON POIs); PostGIS is only used for the local ETL. See docs/despliegue.md.
 #
-# Extras de serving (instalar solo en el host de la API para una imagen mas liviana):
+# Serving extras (install only on the API host for a lighter image):
 #   uv pip install fastapi "uvicorn[standard]" pydantic pandas pyarrow scikit-learn h3 joblib
 [project.optional-dependencies]
 serving = [

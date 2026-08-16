@@ -1,12 +1,12 @@
-"""API de inferencia/serving del Site Selection Engine (FastAPI).
+"""Inference/serving API for the Site Selection Engine (FastAPI).
 
-Sirve el ranking de hexagonos look-alike y la inferencia en vivo del modelo, leyendo
-artefactos versionados (sin PostGIS en runtime). Pensada para una demo en vivo:
-el frontend Streamlit (app/streamlit_app.py) la consume.
+Serves the look-alike hexagon ranking and live model inference, reading versioned
+artifacts (no PostGIS at runtime). Built for a live demo: the Streamlit frontend
+(app/streamlit_app.py) consumes it.
 
-Ejecutar local:
+Run locally:
     uv run uvicorn src.api.main:app --reload
-Docs interactivas: http://127.0.0.1:8000/docs
+Interactive docs: http://127.0.0.1:8000/docs
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ app = FastAPI(
     title="Site Selection Engine API",
     version="0.1.0",
     description=(
-        "Ranking de hexagonos H3 (Bogota) por similitud look-alike a Tiendas D1. "
-        "El score es P(tipo-D1): prioridad de exploracion, no prediccion de ventas."
+        "Ranking of H3 hexagons (Bogota) by look-alike similarity to D1 stores. "
+        "The score is P(D1-type): exploration priority, not a sales prediction."
     ),
 )
 
@@ -51,7 +51,7 @@ def _parse_bbox(bbox: str | None) -> tuple[float, float, float, float] | None:
             raise ValueError
         return parts[0], parts[1], parts[2], parts[3]
     except ValueError:
-        raise HTTPException(422, "bbox debe ser 'minlon,minlat,maxlon,maxlat'.")
+        raise HTTPException(422, "bbox must be 'minlon,minlat,maxlon,maxlat'.")
 
 
 @app.get("/", include_in_schema=False)
@@ -107,18 +107,18 @@ def hex_detail(h3_index: str, model: str | None = Query(None)) -> HexDetail:
     try:
         return HexDetail(**service.hex_detail(m, h3_index))
     except KeyError:
-        raise HTTPException(404, f"Hexagono '{h3_index}' no encontrado en el ranking '{m}'.")
+        raise HTTPException(404, f"Hexagon '{h3_index}' not found in ranking '{m}'.")
 
 
 @app.post("/score", response_model=ScoreResponse)
 def score(req: ScoreRequest) -> ScoreResponse:
     m = service.resolve_model(req.model)
     if m not in config.SERVING_MODELS:
-        raise HTTPException(422, f"El modelo '{m}' no admite inferencia en vivo (sin .joblib).")
+        raise HTTPException(422, f"Model '{m}' does not support live inference (no .joblib).")
     try:
         result = service.score_hex(m, req.h3_index, req.features)
     except KeyError:
-        raise HTTPException(404, f"Hexagono '{req.h3_index}' no esta en la tabla de features.")
+        raise HTTPException(404, f"Hexagon '{req.h3_index}' is not in the features table.")
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         raise HTTPException(422, str(exc))
     return ScoreResponse(**result)
@@ -129,4 +129,4 @@ def pois(name: str) -> dict:
     try:
         return service.poi_layer(name)
     except FileNotFoundError:
-        raise HTTPException(404, f"Capa POI '{name}' no disponible.")
+        raise HTTPException(404, f"POI layer '{name}' not available.")

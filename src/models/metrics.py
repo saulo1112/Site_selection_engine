@@ -1,13 +1,13 @@
-"""Metricas de ranking para evaluar scores de ubicaciones contra la etiqueta look-alike.
+"""Ranking metrics for evaluating location scores against the look-alike label.
 
-Implementacion generica sobre arrays (no atada a MCDA): la reutilizan v1 (MCDA), v2 y v3.
-Replican las metricas del paper de referencia (Lu et al., 2024; ver docs/metodologia.md):
+Generic implementation over arrays (not tied to MCDA): reused by v1 (MCDA), v2 and v3.
+They replicate the metrics from the reference paper (Lu et al., 2024; see docs/metodologia.md):
 
-  - NDCG@K        : calidad del orden en el top-K (premia poner positivos arriba).
-  - top-K hitting : fraccion de positivos reales capturados en el top-K (recall@K).
-  - top-K loss    : fraccion de positivos reales que quedaron FUERA del top-K (1 - hitting).
+  - NDCG@K        : quality of the ordering in the top-K (rewards ranking positives higher).
+  - top-K hitting : fraction of true positives captured in the top-K (recall@K).
+  - top-K loss    : fraction of true positives left OUT of the top-K (1 - hitting).
 
-Convencion: `scores` mas alto = mejor candidato; `labels` binaria (1 = positivo).
+Convention: higher `scores` = better candidate; `labels` binary (1 = positive).
 """
 
 from __future__ import annotations
@@ -23,26 +23,26 @@ def _validate(scores: npt.ArrayLike, labels: npt.ArrayLike) -> tuple[FloatArray,
     s = np.asarray(scores, dtype=np.float64)
     y = np.asarray(labels, dtype=np.int_)
     if s.shape != y.shape:
-        raise ValueError(f"scores y labels deben tener igual forma: {s.shape} vs {y.shape}")
+        raise ValueError(f"scores and labels must have the same shape: {s.shape} vs {y.shape}")
     if s.ndim != 1:
-        raise ValueError(f"se esperaba un arreglo 1D, se recibio ndim={s.ndim}")
+        raise ValueError(f"expected a 1D array, got ndim={s.ndim}")
     if s.size == 0:
-        raise ValueError("scores/labels vacios")
+        raise ValueError("scores/labels are empty")
     return s, y
 
 
 def _topk_indices(scores: FloatArray, k: int) -> IntArray:
-    """Indices de los k scores mas altos (orden descendente, estable ante empates)."""
+    """Indices of the k highest scores (descending order, stable under ties)."""
     k = min(k, scores.size)
-    # argsort estable sobre el negativo -> mayor score primero, empates por orden original.
+    # stable argsort over the negative -> highest score first, ties by original order.
     return np.argsort(-scores, kind="stable")[:k]
 
 
 def topk_hitting_rate(scores: npt.ArrayLike, labels: npt.ArrayLike, k: int) -> float:
-    """Fraccion de positivos reales capturados en el top-K (recall@K).
+    """Fraction of true positives captured in the top-K (recall@K).
 
-    Denominador = total de positivos reales (no K), para que mida cuanta de la
-    "verdad" recuperamos al explorar solo K celdas.
+    Denominator = total number of true positives (not K), so it measures how much of the
+    "ground truth" we recover by exploring only K cells.
     """
     s, y = _validate(scores, labels)
     total_pos = int(y.sum())
@@ -53,13 +53,13 @@ def topk_hitting_rate(scores: npt.ArrayLike, labels: npt.ArrayLike, k: int) -> f
 
 
 def topk_loss(scores: npt.ArrayLike, labels: npt.ArrayLike, k: int) -> float:
-    """Fraccion de positivos reales que quedaron FUERA del top-K (1 - hitting@K)."""
+    """Fraction of true positives left OUT of the top-K (1 - hitting@K)."""
     hit = topk_hitting_rate(scores, labels, k)
     return float("nan") if np.isnan(hit) else 1.0 - hit
 
 
 def _dcg(relevances: FloatArray) -> float:
-    """Discounted Cumulative Gain con descuento log2(rank+1) (rank base 1)."""
+    """Discounted Cumulative Gain with log2(rank+1) discount (rank base 1)."""
     if relevances.size == 0:
         return 0.0
     discounts = 1.0 / np.log2(np.arange(2, relevances.size + 2))
@@ -67,10 +67,10 @@ def _dcg(relevances: FloatArray) -> float:
 
 
 def ndcg_at_k(scores: npt.ArrayLike, labels: npt.ArrayLike, k: int) -> float:
-    """NDCG@K con relevancia binaria.
+    """NDCG@K with binary relevance.
 
-    DCG del orden inducido por `scores` (top-K) normalizado por el DCG ideal
-    (todos los positivos arriba). Devuelve NaN si no hay positivos.
+    DCG of the ordering induced by `scores` (top-K) normalized by the ideal DCG
+    (all positives ranked first). Returns NaN if there are no positives.
     """
     s, y = _validate(scores, labels)
     k = min(k, s.size)
@@ -86,7 +86,7 @@ def ndcg_at_k(scores: npt.ArrayLike, labels: npt.ArrayLike, k: int) -> float:
 
 
 def ranking_report(scores: npt.ArrayLike, labels: npt.ArrayLike, k: int) -> dict[str, float]:
-    """Calcula las tres metricas de ranking de un tiron (para reportes de v1/v2/v3)."""
+    """Computes all three ranking metrics in one go (for v1/v2/v3 reports)."""
     return {
         "ndcg_at_k": ndcg_at_k(scores, labels, k),
         "topk_hitting": topk_hitting_rate(scores, labels, k),

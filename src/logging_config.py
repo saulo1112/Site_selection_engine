@@ -1,8 +1,8 @@
-"""Configuracion de logging estructurado para el pipeline.
+"""Structured logging configuration for the pipeline.
 
-Todos los modulos del pipeline usan `get_logger(__name__)` en lugar de print().
-El formato incluye timestamp, nivel, modulo y mensaje para trazabilidad de las
-descargas y transformaciones.
+All pipeline modules use `get_logger(__name__)` instead of print().
+The format includes timestamp, level, module, and message for traceability
+of downloads and transformations.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ _DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 
 def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
-    """Devuelve un logger configurado una sola vez para todo el proceso."""
+    """Returns a logger configured once for the whole process."""
     global _CONFIGURED
     if not _CONFIGURED:
         handler = logging.StreamHandler(sys.stdout)
@@ -24,7 +24,7 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
         root = logging.getLogger()
         root.setLevel(level)
         root.addHandler(handler)
-        # osmnx/urllib3 son ruidosos a nivel INFO; subir su umbral.
+        # osmnx/urllib3 are noisy at INFO level; raise their threshold.
         logging.getLogger("urllib3").setLevel(logging.WARNING)
         logging.getLogger("osmnx").setLevel(logging.WARNING)
         _CONFIGURED = True

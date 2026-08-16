@@ -1,4 +1,4 @@
-"""Esquemas Pydantic de la API de serving."""
+"""Pydantic schemas for the serving API."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class HexScore(BaseModel):
-    """Un hexagono rankeado (vista ligera para el mapa)."""
+    """A ranked hexagon (lightweight view for the map)."""
     h3_index: str
     lat_centroid: float
     lon_centroid: float
@@ -16,11 +16,11 @@ class HexScore(BaseModel):
 
 
 class HexDetail(HexScore):
-    """Detalle de un hexagono: score/rank + todas sus features (incl. demografia)."""
+    """Hexagon detail: score/rank + all its features (incl. demographics)."""
     features: dict[str, float | None]
     boundary: list[list[float]] = Field(
         default_factory=list,
-        description="Anillo del hexagono como [[lon, lat], ...] (cerrado).",
+        description="Hexagon ring as [[lon, lat], ...] (closed).",
     )
 
 
@@ -32,8 +32,8 @@ class HexesResponse(BaseModel):
 
 
 class ScoreRequest(BaseModel):
-    """Inferencia en vivo. Indica un h3_index (toma sus features del parquet) o
-    pasa un vector de features explicito."""
+    """Live inference. Provide an h3_index (takes its features from the parquet) or
+    pass an explicit feature vector."""
     model: str | None = None
     h3_index: str | None = None
     features: dict[str, float] | None = None

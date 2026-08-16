@@ -1,227 +1,227 @@
-# Metodología — Site Selection Engine
+# Methodology — Site Selection Engine
 
-> Documento vivo. Las secciones marcadas con _(pendiente)_ se completan a medida que
-> avanza la iteración v1 → v2 → v3.
-
----
-
-## 1. Objetivo y valor de negocio
-
-**Problema.** Una cadena de retail / franquicia que planea expandirse en una ciudad
-necesita decidir **dónde** abrir nuevos puntos. Hacerlo "a ojo" o solo por intuición
-inmobiliaria es costoso y sesgado.
-
-**Objetivo del sistema.** Dado un **sector de negocio** y una **ciudad**, producir un
-**ranking de ubicaciones candidatas** sobre un grid hexagonal H3 que cubre la ciudad,
-priorizando celdas según:
-- densidad de **competencia / complementarios** (POIs de OSM/Overpass),
-- variables **demográficas** (DANE — CNPV 2018),
-- **accesibilidad vial** (red de calles de OSM).
-
-**Enfoque look-alike.** Se usa **Tiendas D1** como marca de referencia (expansión
-agresiva y reciente en Colombia, buen etiquetado en OSM como `shop=supermarket` +
-`brand=D1`). La hipótesis: las celdas que "se parecen" a las que D1 ya eligió son
-buenas candidatas de exploración.
-
-**Valor entregado.** Una herramienta de **screening** que reduce el universo de
-ubicaciones a una lista priorizada y auditable, no un reemplazo de la decisión final.
-El score es de **prioridad de exploración / similitud**, no una predicción de ventas
-(ver §2 y §5).
+> Living document. Sections marked _(pending)_ are completed as the v1 → v2 → v3
+> iteration progresses.
 
 ---
 
-## 2. Comparación con el paper de referencia (Lu et al., 2024)
+## 1. Objective and business value
+
+**Problem.** A retail chain / franchise planning to expand in a city needs to decide
+**where** to open new locations. Doing so "by eye" or based only on real-estate intuition
+is costly and biased.
+
+**System objective.** Given a **business sector** and a **city**, produce a
+**ranking of candidate locations** over an H3 hexagonal grid covering the city,
+prioritizing cells based on:
+- density of **competitors / complementary businesses** (OSM/Overpass POIs),
+- **demographic** variables (DANE — CNPV 2018),
+- **road accessibility** (OSM street network).
+
+**Look-alike approach.** **D1 Stores** are used as the reference brand (aggressive
+and recent expansion in Colombia, good OSM tagging as `shop=supermarket` +
+`brand=D1`). The hypothesis: cells that "resemble" those D1 has already chosen are
+good exploration candidates.
+
+**Value delivered.** A **screening** tool that narrows the universe of
+locations down to a prioritized, auditable list, not a replacement for the final decision.
+The score is one of **exploration priority / similarity**, not a sales prediction
+(see §2 and §5).
+
+---
+
+## 2. Comparison with the reference paper (Lu et al., 2024)
 
 > Lu, *et al.* (2024). *Retail store location screening: A machine learning-based
 > approach.* **Journal of Retailing and Consumer Services (JRCS).**
 
-| Dimensión | Lu et al. (2024) | Este proyecto |
+| Dimension | Lu et al. (2024) | This project |
 |---|---|---|
-| Unidad de análisis | Centros comerciales discretos | **Grid hexagonal H3** sobre la ciudad |
-| Variable objetivo | Ingreso real (ASMR — *Average Store Monthly Revenue*) | **Etiqueta look-alike** (proxy: ¿hay D1 en la celda?) |
-| Tipo de problema | Regresión de desempeño | **Clasificación de similitud + ranking** |
-| Métricas de evaluación | NDCG, top-K hitting, top-K loss (+ RMSE) | NDCG, top-K hitting, top-K loss (**compartidas**) |
-| Riesgo de leakage espacial | No central en su diseño (unidades discretas, dispersas) | **Alto**: celdas vecinas correlacionadas → autocorrelación espacial; corregido con **spatial CV** en v3 |
-| Interpretación del score | Predicción de desempeño económico | **Similitud / prioridad de exploración** (no desempeño) |
+| Unit of analysis | Discrete shopping malls | **H3 hexagonal grid** over the city |
+| Target variable | Actual revenue (ASMR — *Average Store Monthly Revenue*) | **Look-alike label** (proxy: is there a D1 in the cell?) |
+| Problem type | Performance regression | **Similarity classification + ranking** |
+| Evaluation metrics | NDCG, top-K hitting, top-K loss (+ RMSE) | NDCG, top-K hitting, top-K loss (**shared**) |
+| Spatial leakage risk | Not central to their design (discrete, dispersed units) | **High**: neighboring cells are correlated → spatial autocorrelation; corrected with **spatial CV** in v3 |
+| Score interpretation | Prediction of economic performance | **Similarity / exploration priority** (not performance) |
 
-**Qué tomamos del paper:**
-1. **Framework de screening por etapas** (filtrado progresivo de candidatos).
-2. **Métricas de ranking** más allá de accuracy/RMSE plano: **NDCG**, **top-K hitting**,
-   **top-K loss** — apropiadas para "¿acerté las mejores K ubicaciones?".
-3. **Ensemble secuencial** (Lasso-first para selección de variables + un segundo modelo
-   sobre los residuales) como posible mejora para v3.
+**What we take from the paper:**
+1. **Staged screening framework** (progressive filtering of candidates).
+2. **Ranking metrics** beyond plain accuracy/RMSE: **NDCG**, **top-K hitting**,
+   **top-K loss** — appropriate for "did we get the best K locations right?".
+3. **Sequential ensemble** (Lasso-first for variable selection + a second model
+   over the residuals) as a possible improvement for v3.
 
-**Diferencia clave a documentar honestamente.** Su objetivo es **ingreso real**; el
-nuestro es una **etiqueta look-alike (proxy)**. Por eso nuestros scores son de
-**similitud / prioridad de exploración**, no de predicción de desempeño. Heredamos el
-supuesto fuerte de que **la estrategia de localización de D1 es buena** (ver §5).
+**Key difference to document honestly.** Their target is **actual revenue**; ours
+is a **look-alike (proxy) label**. That is why our scores represent
+**similarity / exploration priority**, not performance prediction. We inherit the
+strong assumption that **D1's location strategy is good** (see §5).
 
 ---
 
-## 3. Datos y justificación
+## 3. Data and justification
 
-| Fuente | Uso | Granularidad | Nota |
+| Source | Use | Granularity | Note |
 |---|---|---|---|
-| OSM / Overpass | POIs (competencia, complementarios), etiqueta D1 | Punto | Señal medida en el chequeo de área |
-| OSM (red vial) | Accesibilidad (vía `osmnx`) | Arco/nodo | Centralidad, distancia a vías |
-| DANE — CNPV 2018 / MGN | Demografía (población, viviendas, hogares) | Manzana / sector | Cobertura nacional uniforme |
-| Estratificación municipal | Estrato socioeconómico (proxy de ingreso) | Manzana / lado de manzana | **NO** es variable del censo; varía por ciudad |
+| OSM / Overpass | POIs (competitors, complementary businesses), D1 label | Point | Signal measured in the area check |
+| OSM (road network) | Accessibility (via `osmnx`) | Arc/node | Centrality, distance to roads |
+| DANE — CNPV 2018 / MGN | Demographics (population, housing units, households) | City block / sector | Uniform national coverage |
+| Municipal stratification | Socioeconomic stratum (income proxy) | City block / block side | **NOT** a census variable; varies by city |
 
-La elección de **ciudad de estudio** y la justificación *data-driven* de la
-disponibilidad de estas fuentes están en **[seleccion_area_estudio.md](seleccion_area_estudio.md)**.
+The choice of **study city** and the *data-driven* justification of the
+availability of these sources are in **[seleccion_area_estudio.md](seleccion_area_estudio.md)**.
 
-> **Nota sobre el conteo de D1.** El chequeo de ciudad usó una query Overpass estricta
-> (solo `brand`, 129 para Bogotá) para comparar las 4 ciudades con un criterio uniforme.
-> El pipeline de producción usa una query más permisiva (`brand` o `name~"D1"`) y carga
-> **166** POIs D1 (`data/raw/pois_d1.geojson`) — el número real que entra al modelo.
-> Ver la reconciliación completa en `seleccion_area_estudio.md` §5.
+> **Note on the D1 count.** The city check used a strict Overpass query
+> (`brand` only, 129 for Bogotá) to compare the 4 cities under a uniform criterion.
+> The production pipeline uses a more permissive query (`brand` or `name~"D1"`) and loads
+> **166** D1 POIs (`data/raw/pois_d1.geojson`) — the actual number that enters the model.
+> See the full reconciliation in `seleccion_area_estudio.md` §5.
 
 ---
 
-## 4. Plan de iteración v1 → v2 → v3 → v4
+## 4. Iteration plan v1 → v2 → v3 → v4
 
-La iteración honesta (replicando el estándar del proyecto EUDR) documenta no solo el
-modelo final sino **por qué** cada versión fue insuficiente.
+The honest iteration (replicating the EUDR project standard) documents not only the
+final model but **why** each version was insufficient.
 
-### v1 — MCDA baseline (sin ML)
-- **Qué.** *Multi-Criteria Decision Analysis*: score ponderado de variables normalizadas
-  (min-max), pesos a priori por grupo (competencia 41%, complementarios 41%,
-  accesibilidad vial 18% tras renormalizar — la demografía quedó fuera porque el censo
-  no está cargado). Implementado en `src/models/mcda.py`; métricas reutilizables en
+### v1 — MCDA baseline (no ML)
+- **What.** *Multi-Criteria Decision Analysis*: weighted score of normalized variables
+  (min-max), a priori weights per group (competitors 41%, complementary 41%,
+  road accessibility 18% after renormalizing — demographics were left out because the census
+  is not loaded). Implemented in `src/models/mcda.py`; reusable metrics in
   `src/models/metrics.py`.
-- **Por qué primero.** Línea base interpretable y barata; referencia contra la cual medir
-  si el ML aporta algo.
-- **Anti-leakage.** Las features derivadas de D1 (`n_d1_300m`, `n_d1_500m`, `dist_d1_km`)
-  se **excluyen del score** (la etiqueta `tiene_d1` es función directa de ellas). Además,
-  las features de competencia miden solo competidores **no-D1** (ver §6, leakage de
-  features descubierto y corregido). La etiqueta solo se usa como validación post-hoc.
-- **Resultados** (ver [v1_mcda_resultados.md](v1_mcda_resultados.md), post-corrección de
-  leakage de features). Evaluación honesta sobre los 3589 hexágonos, K=200:
+- **Why first.** Interpretable, cheap baseline; a reference against which to measure
+  whether ML adds anything.
+- **Anti-leakage.** Features derived from D1 (`n_d1_300m`, `n_d1_500m`, `dist_d1_km`)
+  are **excluded from the score** (the `tiene_d1` label is a direct function of them). Also,
+  the competitor features measure only **non-D1** competitors (see §6, feature leakage
+  discovered and corrected). The label is used only as post-hoc validation.
+- **Results** (see [v1_mcda_resultados.md](v1_mcda_resultados.md), post feature-leakage
+  correction). Honest evaluation over the 3589 hexagons, K=200:
   - **NDCG@200 = 0.8033**, **Precision@200 = 0.765**, **top-200 hitting = 0.1741**
-    (techo 0.2275, pues hay 879 positivos ≫ K=200).
-  - Lectura: un baseline sin ML ordena bien las celdas más parecidas a las de D1. v2/v3
-    deberán superarlo —o, en v3, revelar cuánto de esto se sostiene sin leakage espacial.
+    (ceiling 0.2275, since there are 879 positives ≫ K=200).
+  - Reading: an ML-free baseline ranks the cells most similar to D1's reasonably well. v2/v3
+    should beat it — or, in v3, reveal how much of this holds up without spatial leakage.
 
-### v2 — Clasificador look-alike naïve
-- **Qué.** Regresión Logística (`class_weight='balanced'`, features estandarizadas) que
-  estima `P(tiene_d1=1)` desde las features no-D1; el probabilístico es el score
-  look-alike. Split train/test **aleatorio estratificado** 75/25. Implementado en
+### v2 — Naive look-alike classifier
+- **What.** Logistic Regression (`class_weight='balanced'`, standardized features) that
+  estimates `P(tiene_d1=1)` from the non-D1 features; the probability is the
+  look-alike score. **Random stratified** train/test split 75/25. Implemented in
   `src/models/lookalike.py`.
-- **Clases.** Binaria: clase 1 = hexágono con ≥1 D1 a ≤300 m ("tipo-D1"); clase 0 = sin D1.
-- **Riesgo conocido de antemano.** El split aleatorio mezcla celdas vecinas entre train y
-  test → **leakage por autocorrelación espacial** → métricas optimistas (lo corrige v3).
-- **Resultados** (ver [v2_lookalike_resultados.md](v2_lookalike_resultados.md), post-
-  corrección de leakage de features). Test: **ROC-AUC = 0.7801**, **PR-AUC = 0.5970**;
-  clase 1 con **recall = 0.686** (predice ambas clases, no colapsa). Ranking sobre el grid:
-  **NDCG@200 = 0.8349**, **Precision@200 = 0.805** — supera levemente a v1. La ventaja real
-  sobre v1 se confirmará (o no) en v3 al quitar el leakage espacial.
+- **Classes.** Binary: class 1 = hexagon with ≥1 D1 within ≤300 m ("D1-type cell"); class 0 = no nearby D1.
+- **Known risk from the outset.** The random split mixes neighboring cells between train and
+  test → **leakage from spatial autocorrelation** → overly optimistic metrics (corrected by v3).
+- **Results** (see [v2_lookalike_resultados.md](v2_lookalike_resultados.md), post
+  feature-leakage correction). Test: **ROC-AUC = 0.7801**, **PR-AUC = 0.5970**;
+  class 1 with **recall = 0.686** (predicts both classes, does not collapse). Ranking over the grid:
+  **NDCG@200 = 0.8349**, **Precision@200 = 0.805** — slightly beats v1. The real advantage
+  over v1 will be confirmed (or not) in v3 once spatial leakage is removed.
 
-### v3 — Mismo modelo con Spatial CV
-- **Qué.** Idéntica Regresión Logística, pero validación con **spatial cross-validation**:
-  bloques H3 a resolución padre 6 (24 bloques de ~36 km²), `StratifiedGroupKFold` de 5
-  folds, y **buffer de 1 anillo** (se excluyen del train las celdas a ≤1 anillo de
-  cualquier celda de test). Cada hexágono se predice **out-of-fold** por un modelo que no
-  vio su vecindario. Implementado en `src/models/lookalike_v3.py` y `src/models/spatial_cv.py`.
-- **Por qué.** Da una estimación **honesta** de generalización y mide cuánto del desempeño
-  de v2 era leakage espacial.
-- **Resultados** (ver [v3_spatial_cv_resultados.md](v3_spatial_cv_resultados.md)).
+### v3 — Same model with Spatial CV
+- **What.** Identical Logistic Regression, but validated with **spatial cross-validation**:
+  H3 blocks at parent resolution 6 (24 blocks of ~36 km²), `StratifiedGroupKFold` with 5
+  folds, and a **1-ring buffer** (cells within ≤1 ring of any test cell are excluded from
+  train). Each hexagon is predicted **out-of-fold** by a model that did not see its
+  neighborhood. Implemented in `src/models/lookalike_v3.py` and `src/models/spatial_cv.py`.
+- **Why.** Provides an **honest** estimate of generalization and measures how much of v2's
+  performance was spatial leakage.
+- **Results** (see [v3_spatial_cv_resultados.md](v3_spatial_cv_resultados.md)).
   OOF: **ROC-AUC = 0.7934**, **PR-AUC = 0.5899**, **NDCG@200 = 0.8400**,
-  **Precision@200 = 0.815**; clase 1 con recall = 0.718 (no colapsa).
-- **Hallazgo honesto (contra la hipótesis inicial).** Esperábamos una **caída** de métricas
-  como evidencia de leakage espacial. **No ocurrió**: v3 iguala (incluso supera levemente)
-  a v2 (Δ NDCG@200 = +0.0051, Δ ROC-AUC = +0.0132). Interpretación: con un modelo lineal
-  sobre features de buffer (campos espaciales suaves), un split aleatorio y uno espacial
-  generalizan parecido; la señal no-D1 **se sostiene en zonas no vistas**, no era un
-  espejismo del split. Documentar esto —y no forzar la narrativa esperada— es justamente
-  la iteración honesta del estándar EUDR.
-- **Posible mejora (del paper, futuro).** Ensemble secuencial Lasso-first + 2º modelo sobre
-  residuales; útil sobre todo si en el futuro se añade demografía/estrato y aparecen
-  no-linealidades.
+  **Precision@200 = 0.815**; class 1 with recall = 0.718 (does not collapse).
+- **Honest finding (against the initial hypothesis).** We expected a **drop** in metrics
+  as evidence of spatial leakage. **It did not happen**: v3 matches (even slightly exceeds)
+  v2 (Δ NDCG@200 = +0.0051, Δ ROC-AUC = +0.0132). Interpretation: with a linear model
+  over buffer features (smooth spatial fields), a random split and a spatial one
+  generalize similarly; the non-D1 signal **holds up in unseen areas**, it was not
+  a mirage of the split. Documenting this — and not forcing the expected narrative — is exactly
+  the honest iteration of the EUDR standard.
+- **Possible improvement (from the paper, future work).** Sequential ensemble Lasso-first + 2nd model
+  over residuals; especially useful if demographics/stratum are added in the future and
+  non-linearities appear.
 
-### v4 — v3 + demografía (DANE + IDECA)
-- **Qué.** Mismo modelo (Regresión Logística) y **mismo** esquema de spatial CV de v3, pero
-  añadiendo las features demográficas prorrateadas por manzana: **población** y **viviendas**
-  (censo DANE CNPV 2018) y **estrato** socioeconómico (IDECA Bogotá). Implementado en
+### v4 — v3 + demographics (DANE + IDECA)
+- **What.** Same model (Logistic Regression) and **same** spatial CV scheme as v3, but
+  adding demographic features prorated by city block: **population** and **housing units**
+  (DANE CNPV 2018 census) and socioeconomic **stratum** (IDECA Bogotá). Implemented in
   `src/models/lookalike_v4.py`.
-- **Prorrateo (dos naturalezas).** Población/viviendas son magnitudes **extensivas** → suma
-  ponderada por la fracción del área de cada manzana dentro del hexágono (sin doble conteo),
-  vía `_prorate_sum_expr`. El estrato es **intensivo/ordinal** (1-6) → **promedio ponderado**
-  por área de intersección (no se suma), descartando estrato 0/no residencial, vía
-  `_prorate_avg_expr` (ambos en `src/data/features.py`).
-- **NULL parcial + imputación.** Las manzanas no cubren todo el grid (zonas no residenciales
-  / sin estrato) → demografía con NULL parcial. En vez de descartar hexágonos, el `Pipeline`
-  incorpora un `SimpleImputer(median)` ajustado **dentro de cada fold** (`build_model` en
-  `src/models/lookalike.py`), sin fuga entre train y test. La **cobertura** (% con dato) se
-  reporta en [features_summary.md](features_summary.md) y en los resultados de v4.
-- **Aislar el aporte (diseño honesto).** v4 evalúa, bajo idéntico spatial CV, dos conjuntos
-  de predictores: **BASE** (sin demografía, = v3) y **FULL** (+ demografía, = v4). El Δ de
-  métricas OOF aísla el aporte de la demografía, no del método de validación. Si la
-  demografía **no** mueve las métricas, se reporta tal cual (mismo criterio que el hallazgo
-  honesto de v3); v4 se adopta como producción solo si mejora o empata con mejor
-  interpretabilidad.
-- **Hipótesis de negocio a verificar.** D1 es *hard-discount* con foco en estratos bajos →
-  se espera que `estrato_promedio` tenga coeficiente **negativo** (a menor estrato, mayor
-  P(tipo-D1)). El coeficiente de la LR en v4 lo confirma o no.
-- **Resultados.** Generados al cargar las capas y correr el módulo, en
+- **Proration (two natures).** Population/housing units are **extensive** quantities → sum
+  weighted by the fraction of each block's area within the hexagon (no double counting),
+  via `_prorate_sum_expr`. Stratum is **intensive/ordinal** (1-6) → **weighted average**
+  by intersection area (not summed), discarding stratum 0/non-residential, via
+  `_prorate_avg_expr` (both in `src/data/features.py`).
+- **Partial NULL + imputation.** City blocks do not cover the entire grid (non-residential
+  / no-stratum areas) → demographics have partial NULLs. Instead of discarding hexagons, the `Pipeline`
+  incorporates a `SimpleImputer(median)` fit **within each fold** (`build_model` in
+  `src/models/lookalike.py`), with no leakage between train and test. **Coverage** (% with data)
+  is reported in [features_summary.md](features_summary.md) and in the v4 results.
+- **Isolating the contribution (honest design).** v4 evaluates, under identical spatial CV, two sets
+  of predictors: **BASE** (without demographics, = v3) and **FULL** (+ demographics, = v4). The Δ of
+  the OOF metrics isolates the contribution of demographics, not of the validation method. If
+  demographics **do not** move the metrics, this is reported as-is (same criterion as v3's honest
+  finding); v4 is adopted for production only if it improves on or ties v3 with better
+  interpretability.
+- **Business hypothesis to verify.** D1 is *hard-discount* focused on lower strata →
+  `estrato_promedio` is expected to have a **negative** coefficient (the lower the stratum, the higher
+  P(D1-type)). The LR coefficient in v4 confirms this, or not.
+- **Results.** Generated when the layers are loaded and the module is run, in
   [v4_demografia_resultados.md](v4_demografia_resultados.md).
 
 ---
 
-## 5. Limitaciones honestas
+## 5. Honest limitations
 
-1. **El score es de similitud, no de desempeño.** Mide parecido a las celdas con D1, no
-   ventas esperadas. Un "score alto" = "vale la pena explorar", no "será rentable".
-2. **Supuesto look-alike.** Asume que la estrategia de localización de D1 es buena. Si D1
-   se equivoca sistemáticamente, el modelo replica su sesgo.
-3. **Sesgo de etiquetado OSM.** El conteo de POIs depende de qué tan bien mapeada está la
-   ciudad; zonas sub-mapeadas parecen "vacías" sin estarlo.
-4. **Estrato como proxy de ingreso.** El estrato socioeconómico aproxima el ingreso pero
-   no lo es; su disponibilidad y vigencia varían por ciudad.
-5. **Estática temporal.** El censo es de 2018; OSM es dinámico pero desigual.
+1. **The score reflects similarity, not performance.** It measures resemblance to cells with D1, not
+   expected sales. A "high score" means "worth exploring", not "will be profitable".
+2. **Look-alike assumption.** Assumes D1's location strategy is good. If D1
+   is systematically wrong, the model replicates its bias.
+3. **OSM tagging bias.** POI counts depend on how well-mapped the city is;
+   under-mapped areas look "empty" without actually being so.
+4. **Stratum as an income proxy.** Socioeconomic stratum approximates income but
+   is not income; its availability and currency vary by city.
+5. **Temporal staticness.** The census is from 2018; OSM is dynamic but unevenly maintained.
 
 ---
 
-## 6. Chequeo explícito de leakage
+## 6. Explicit leakage check
 
-Se distinguen **dos** tipos de leakage, con tratamientos distintos.
+Two types of leakage are distinguished, with different treatments.
 
-### 6.1 Leakage de features / target (descubierto y corregido)
+### 6.1 Feature/target leakage (discovered and corrected)
 
-- **Tipo (a) — tautológico, siempre excluido.** La etiqueta `tiene_d1` se define como
-  `n_d1_300m >= 1`. Por construcción, las features derivadas de D1 (`n_d1_300m`,
-  `n_d1_500m`, `dist_d1_km`) son función directa de la etiqueta. **Nunca** se usan como
-  predictores (ni en MCDA ni en la LR); ver `config.MCDA_LEAKAGE_COLS`.
-- **Tipo (b) — D1 dentro de "competidores" (descubierto durante v2, corregido).** Las
-  features de competencia (`n_supermercados_500m`, `dist_supermercado_km`) se calculaban
-  sobre `pois_competidores`, que **incluía a D1**. Como todo positivo tiene un D1 a ≤300 m,
-  ese mismo D1 contaba como "supermercado": el **100 %** de los positivos quedaba con
-  `dist_supermercado_km ≤ 0.30` (cap mecánico) y `n_supermercados_500m ≥ 1`. En la LR el
-  coeficiente de `dist_supermercado_km` se disparaba a **-6.33**, dominando el modelo.
-  - **Corrección.** En `src/data/features.py` las subconsultas de competencia ahora filtran
-    `COALESCE(es_d1, 0) = 0` (miden solo competidores **no-D1**; D1 es el objetivo
-    look-alike, no un competidor a medir).
-  - **Evidencia del fix.** Positivos con `dist_supermercado_km ≤ 0.30`: **100 % → 65.1 %**;
-    con `n_supermercados_500m ≥ 1`: **100 % → 81.7 %**; coeficiente LR: **-6.33 → -1.09**.
-    Caída honesta de métricas: v1 NDCG@200 0.8495→0.8033; v2 ROC-AUC 0.9177→0.7801,
-    PR-AUC 0.7724→0.5970. La correlación residual `dist_supermercado_km`↔`dist_d1_km` =
-    **0.7653** (calculada en `src/data/features.py::write_summary()`, ver
-    [features_summary.md](features_summary.md)) es co-localización real (señal legítima
-    del look-alike), no leakage.
+- **Type (a) — tautological, always excluded.** The `tiene_d1` label is defined as
+  `n_d1_300m >= 1`. By construction, features derived from D1 (`n_d1_300m`,
+  `n_d1_500m`, `dist_d1_km`) are a direct function of the label. They are **never**
+  used as predictors (neither in MCDA nor in the LR); see `config.MCDA_LEAKAGE_COLS`.
+- **Type (b) — D1 inside "competitors" (discovered during v2, corrected).** The
+  competitor features (`n_supermercados_500m`, `dist_supermercado_km`) were computed
+  over `pois_competidores`, which **included D1**. Since every positive has a D1 within ≤300 m,
+  that same D1 counted as a "supermarket": **100%** of the positives ended up with
+  `dist_supermercado_km ≤ 0.30` (mechanical cap) and `n_supermercados_500m ≥ 1`. In the LR the
+  coefficient of `dist_supermercado_km` spiked to **-6.33**, dominating the model.
+  - **Fix.** In `src/data/features.py` the competitor subqueries now filter
+    `COALESCE(es_d1, 0) = 0` (they measure only **non-D1** competitors; D1 is the
+    look-alike target, not a competitor to measure).
+  - **Evidence of the fix.** Positives with `dist_supermercado_km ≤ 0.30`: **100% → 65.1%**;
+    with `n_supermercados_500m ≥ 1`: **100% → 81.7%**; LR coefficient: **-6.33 → -1.09**.
+    Honest drop in metrics: v1 NDCG@200 0.8495→0.8033; v2 ROC-AUC 0.9177→0.7801,
+    PR-AUC 0.7724→0.5970. The residual correlation `dist_supermercado_km`↔`dist_d1_km` =
+    **0.7653** (computed in `src/data/features.py::write_summary()`, see
+    [features_summary.md](features_summary.md)) is genuine co-location (legitimate
+    look-alike signal), not leakage.
 
-### 6.2 Leakage por autocorrelación espacial (v2 → v3)
+### 6.2 Spatial-autocorrelation leakage (v2 → v3)
 
-- **Mecanismo (v2).** Celdas H3 vecinas tienen features y etiqueta correlacionadas; un
-  split aleatorio las reparte entre train y test → métricas potencialmente optimistas.
-- **Corrección (v3).** Spatial CV: bloques H3 a resolución padre 6, `StratifiedGroupKFold`
-  de 5 folds y **buffer de 1 anillo** H3 (`grid_disk`) excluido del train alrededor de cada
-  celda de test. Predicciones out-of-fold = estimación honesta.
-- **Resultado (medido, no esperado).** La caída **no** se materializó: v3 iguala/supera
-  levemente a v2. El leakage por autocorrelación espacial era **menor de lo anticipado**
-  para este modelo lineal sobre features de buffer. Es un hallazgo honesto: la señal no-D1
-  generaliza a zonas no vistas. (No se ajustó el radio de buffer para "fabricar" una caída;
-  1 anillo es coherente con celdas de ~174 m de arista y bloques de ~6 km.)
+- **Mechanism (v2).** Neighboring H3 cells have correlated features and labels; a
+  random split distributes them between train and test → potentially optimistic metrics.
+- **Fix (v3).** Spatial CV: H3 blocks at parent resolution 6, `StratifiedGroupKFold`
+  with 5 folds and a **1-ring** H3 buffer (`grid_disk`) excluded from train around each
+  test cell. Out-of-fold predictions = honest estimate.
+- **Result (measured, not expected).** The drop **did not** materialize: v3 matches/slightly
+  exceeds v2. Spatial-autocorrelation leakage was **smaller than anticipated**
+  for this linear model over buffer features. This is an honest finding: the non-D1 signal
+  generalizes to unseen areas. (The buffer radius was not tuned to "manufacture" a drop;
+  1 ring is consistent with cells of ~174 m edge and blocks of ~6 km.)
 
-| Métrica (K=200) | v2 (split aleatorio) | v3 (spatial CV, OOF) | Δ (v3 − v2) |
+| Metric (K=200) | v2 (random split) | v3 (spatial CV, OOF) | Δ (v3 − v2) |
 |---|---|---|---|
 | ROC-AUC | 0.7801 | 0.7934 | +0.0132 |
 | PR-AUC | 0.5970 | 0.5899 | −0.0071 |
@@ -230,9 +230,9 @@ Se distinguen **dos** tipos de leakage, con tratamientos distintos.
 
 ---
 
-## Referencias
+## References
 
 - Lu, *et al.* (2024). *Retail store location screening: A machine learning-based
   approach.* Journal of Retailing and Consumer Services.
-- DANE (2018). Censo Nacional de Población y Vivienda (CNPV) — Marco Geoestadístico
-  Nacional (MGN). https://geoportal.dane.gov.co/
+- DANE (2018). National Population and Housing Census (CNPV) — National
+  Geostatistical Framework (MGN). https://geoportal.dane.gov.co/

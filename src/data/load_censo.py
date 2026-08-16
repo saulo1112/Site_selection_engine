@@ -1,21 +1,21 @@
-"""ETAPA 3 (opcional) — Adquisicion de manzanas del censo DANE (MGN + CNPV 2018).
+"""STAGE 3 (optional) — Acquisition of DANE census blocks (MGN + CNPV 2018).
 
-El Marco Geoestadistico Nacional (MGN) del DANE se distribuye desde un geoportal con
-interfaz JavaScript (no una API REST estable de descarga directa), por lo que la
-descarga 100% programatica no es confiable. Este script:
+The DANE Marco Geoestadistico Nacional (MGN) is distributed via a geoportal with a
+JavaScript interface (not a stable REST API for direct download), so a 100%
+programmatic download is not reliable. This script:
 
-  1. Intenta una descarga best-effort desde URLs candidatas conocidas.
-  2. Si falla, imprime instrucciones claras de descarga MANUAL y termina sin error
-     (NO bloquea el resto del pipeline: las features demograficas son opcionales).
+  1. Attempts a best-effort download from known candidate URLs.
+  2. If it fails, prints clear MANUAL download instructions and exits without error
+     (it does NOT block the rest of the pipeline: demographic features are optional).
 
-Una vez tengas el archivo de manzanas localmente, colocalo como uno de:
-    data/raw/manzanas_censo.gpkg   (recomendado)
+Once you have the blocks file locally, place it as one of:
+    data/raw/manzanas_censo.gpkg   (recommended)
     data/raw/manzanas_censo.geojson
     data/raw/MGN_ANM_MANZANA.shp   (+ .dbf/.shx/.prj)
-y vuelve a correr:  uv run python -m src.data.db   (cargara la tabla manzanas_censo)
+and rerun:  uv run python -m src.data.db   (will load the manzanas_censo table)
                     uv run python -m src.data.features
 
-Ejecutar:
+Run:
     uv run python -m src.data.load_censo
 """
 
@@ -28,32 +28,32 @@ from src.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# URLs candidatas (pueden cambiar; el geoportal reorganiza rutas periodicamente).
+# Candidate URLs (may change; the geoportal reorganizes routes periodically).
 CANDIDATE_URLS = [
-    # MGN 2018 a nivel nacional integrado con CNPV (geopackage comprimido).
+    # MGN 2018 at national level integrated with CNPV (compressed geopackage).
     "https://geoportal.dane.gov.co/descargas/mgn_2018/MGN2018_INTEGRADO.zip",
 ]
 
 MANUAL_INSTRUCTIONS = f"""
-================ DESCARGA MANUAL DEL CENSO (MGN + CNPV 2018) ================
-La descarga programatica no fue posible. Sigue estos pasos (una sola vez):
+================ MANUAL CENSUS DOWNLOAD (MGN + CNPV 2018) ================
+The programmatic download was not possible. Follow these steps (one time only):
 
-1. Abre la pagina de descargas geoestadisticas del DANE:
+1. Open the DANE geostatistical downloads page:
    https://geoportal.dane.gov.co/servicios/descarga-y-metadatos/datos-geoestadisticos/
 
-2. Selecciona:
-   - Producto : Marco Geoestadistico Nacional (MGN) integrado con CNPV 2018
-   - Nivel    : MANZANA
-   - Filtro   : Departamento "11 - Bogota, D.C."
-   (Variables del CNPV a nivel manzana: poblacion, viviendas, hogares.
-    NOTA: el estrato NO viene en el censo; ver docs/seleccion_area_estudio.md.)
+2. Select:
+   - Product : Marco Geoestadistico Nacional (MGN) integrated with CNPV 2018
+   - Level   : MANZANA (block)
+   - Filter  : Departamento "11 - Bogota, D.C."
+   (CNPV variables at block level: population, dwellings, households.
+    NOTE: estrato (socioeconomic stratum) is NOT in the census; see docs/seleccion_area_estudio.md.)
 
-3. Descarga el shapefile o geopackage y descomprime.
+3. Download the shapefile or geopackage and unzip it.
 
-4. Coloca la capa de manzanas en data/raw/ con uno de estos nombres:
+4. Place the blocks layer in data/raw/ under one of these names:
    {chr(10).join('     - ' + p.name for p in config.CENSO_PATH_CANDIDATES)}
 
-5. Recarga a PostGIS y recalcula features:
+5. Reload into PostGIS and recompute features:
      uv run python -m src.data.db
      uv run python -m src.data.features
 ============================================================================
@@ -61,31 +61,31 @@ La descarga programatica no fue posible. Sigue estos pasos (una sola vez):
 
 
 def try_download() -> bool:
-    """Intenta descargar el MGN desde las URLs candidatas. True si lo logra."""
+    """Attempts to download the MGN from the candidate URLs. True if it succeeds."""
     target = config.DATA_RAW / "MGN2018_INTEGRADO.zip"
     headers = {"User-Agent": config.USER_AGENT}
     for url in CANDIDATE_URLS:
         try:
-            logger.info("Intentando descarga: %s", url)
+            logger.info("Attempting download: %s", url)
             with requests.get(url, headers=headers, stream=True, timeout=120) as resp:
                 resp.raise_for_status()
                 with open(target, "wb") as fh:
                     for chunk in resp.iter_content(chunk_size=1 << 20):
                         fh.write(chunk)
-            logger.info("Descargado -> %s (descomprime y coloca la capa de manzanas)", target.name)
+            logger.info("Downloaded -> %s (unzip it and place the blocks layer)", target.name)
             return True
         except requests.RequestException as exc:
-            logger.warning("Fallo la descarga de %s (%s)", url, type(exc).__name__)
+            logger.warning("Download failed for %s (%s)", url, type(exc).__name__)
     return False
 
 
 def main() -> None:
     existing = next((p for p in config.CENSO_PATH_CANDIDATES if p.exists()), None)
     if existing:
-        logger.info("Ya existe un archivo de censo local: %s. Nada que hacer.", existing.name)
+        logger.info("A local census file already exists: %s. Nothing to do.", existing.name)
         return
     if not try_download():
-        logger.warning("No se pudo descargar automaticamente el censo.")
+        logger.warning("Could not automatically download the census.")
         print(MANUAL_INSTRUCTIONS)
 
 

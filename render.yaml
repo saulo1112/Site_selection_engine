@@ -1,5 +1,5 @@
-# Blueprint de Render para la API de inferencia (FastAPI, Docker).
-# La UI Streamlit se despliega aparte en Streamlit Community Cloud (ver docs/despliegue.md).
+# Render blueprint for the inference API (FastAPI, Docker).
+# The Streamlit UI is deployed separately on Streamlit Community Cloud (see docs/despliegue.md).
 services:
   - type: web
     name: site-selection-api
@@ -9,6 +9,6 @@ services:
     healthCheckPath: /health
     envVars:
       - key: SERVING_MODEL
-        value: v3            # cambiar a v4 cuando la demografia este cargada
+        value: v3            # switch to v4 once demographic data is loaded
       - key: SERVING_CORS_ORIGINS
-        value: "*"           # restringir al dominio de Streamlit en produccion
+        value: "*"           # restrict to the Streamlit domain in production

@@ -1,26 +1,26 @@
-"""ETAPA 3 (opcional) — Adquisicion del estrato socioeconomico por manzana (IDECA Bogota).
+"""STAGE 3 (optional) — Acquisition of socioeconomic stratum per block (IDECA Bogota).
 
-El estrato NO viene en el censo DANE (CNPV/MGN). Es una capa aparte que publica la
-Secretaria Distrital de Planeacion / IDECA ("Manzana Estratificacion") con el estrato
-(1-6) por manzana urbana de Bogota. Es una senal muy relevante para el look-alike:
-Tiendas D1 es hard-discount con foco en estratos 1-3.
+The stratum is NOT included in the DANE census (CNPV/MGN). It's a separate layer
+published by the Secretaria Distrital de Planeacion / IDECA ("Manzana Estratificacion")
+with the stratum (1-6) per urban block in Bogota. It's a highly relevant signal for
+the look-alike: Tiendas D1 is a hard-discount chain focused on strata 1-3.
 
-Como el censo, su distribucion es via geoportal con interfaz JavaScript / servicios
-ArcGIS que cambian de ruta, por lo que la descarga 100% programatica no es confiable.
-Este script:
+Like the census, it's distributed via a geoportal with a JavaScript interface / ArcGIS
+services whose routes change, so a 100% programmatic download isn't reliable.
+This script:
 
-  1. Intenta una descarga best-effort desde URLs/servicios candidatos conocidos.
-  2. Si falla, imprime instrucciones de descarga MANUAL y termina sin error
-     (NO bloquea el pipeline: las features demograficas son opcionales).
+  1. Attempts a best-effort download from known candidate URLs/services.
+  2. If it fails, prints MANUAL download instructions and exits without error
+     (it does NOT block the pipeline: demographic features are optional).
 
-Una vez tengas la capa de manzanas con estrato localmente, colocala como uno de:
-    data/raw/estrato_bogota.gpkg       (recomendado)
+Once you have the block layer with stratum locally, place it as one of:
+    data/raw/estrato_bogota.gpkg       (recommended)
     data/raw/estrato_bogota.geojson
     data/raw/ManzanaEstratificacion.shp   (+ .dbf/.shx/.prj)
-y vuelve a correr:  uv run python -m src.data.db       (cargara la tabla manzanas_estrato)
+and rerun:          uv run python -m src.data.db       (loads the manzanas_estrato table)
                     uv run python -m src.data.features
 
-Ejecutar:
+Run:
     uv run python -m src.data.load_estrato
 """
 
@@ -33,32 +33,32 @@ from src.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# Servicios candidatos (pueden cambiar; los portales reorganizan rutas periodicamente).
-# Se intenta una consulta GeoJSON a un FeatureServer de ArcGIS (formato estable cuando
-# el servicio existe). Si la capa cambia de id, usar la descarga manual.
+# Candidate services (may change; portals reorganize routes periodically).
+# A GeoJSON query is attempted against an ArcGIS FeatureServer (stable format when
+# the service exists). If the layer's id changes, use the manual download.
 CANDIDATE_URLS = [
-    # Datos Abiertos Bogota — exportacion GeoJSON del dataset de estratificacion.
+    # Datos Abiertos Bogota — GeoJSON export of the stratification dataset.
     "https://datosabiertos.bogota.gov.co/dataset/manzana-estratificacion",
 ]
 
 MANUAL_INSTRUCTIONS = f"""
-============== DESCARGA MANUAL DEL ESTRATO (IDECA / SDP Bogota) ==============
-La descarga programatica no fue posible. Sigue estos pasos (una sola vez):
+============== MANUAL STRATUM DOWNLOAD (IDECA / SDP Bogota) ==============
+The programmatic download wasn't possible. Follow these steps (one time only):
 
-1. Abre el portal de Datos Abiertos de Bogota o el geoportal de IDECA:
+1. Open the Bogota Open Data portal or the IDECA geoportal:
    - https://datosabiertos.bogota.gov.co/dataset/manzana-estratificacion
-   - https://www.ideca.gov.co/  (buscar "Manzana Estratificacion")
+   - https://www.ideca.gov.co/  (search for "Manzana Estratificacion")
 
-2. Descarga la capa "Manzana Estratificacion" (Shapefile / GeoPackage / GeoJSON).
-   Debe contener un atributo de estrato por manzana (valores 1-6; el 0 suele ser
-   "sin estrato"/no residencial — se trata como nulo en features.py).
+2. Download the "Manzana Estratificacion" layer (Shapefile / GeoPackage / GeoJSON).
+   It must contain a stratum attribute per block (values 1-6; 0 usually means
+   "no stratum"/non-residential — treated as null in features.py).
 
-3. Descomprime si aplica.
+3. Unzip if needed.
 
-4. Coloca la capa en data/raw/ con uno de estos nombres:
+4. Place the layer in data/raw/ with one of these names:
    {chr(10).join('     - ' + p.name for p in config.ESTRATO_PATH_CANDIDATES)}
 
-5. Recarga a PostGIS y recalcula features:
+5. Reload into PostGIS and recompute features:
      uv run python -m src.data.db
      uv run python -m src.data.features
 =============================================================================
@@ -66,39 +66,39 @@ La descarga programatica no fue posible. Sigue estos pasos (una sola vez):
 
 
 def try_download() -> bool:
-    """Intenta descargar la capa de estrato desde las URLs candidatas. True si lo logra.
+    """Attempts to download the stratum layer from the candidate URLs. True if it succeeds.
 
-    Nota: solo se acepta si la respuesta parece un GeoJSON (FeatureCollection); las
-    paginas HTML de los portales se descartan para no guardar basura.
+    Note: only accepted if the response looks like GeoJSON (FeatureCollection); portal
+    HTML pages are discarded so we don't save junk.
     """
     target = config.DATA_RAW / "estrato_bogota.geojson"
     headers = {"User-Agent": config.USER_AGENT}
     for url in CANDIDATE_URLS:
         try:
-            logger.info("Intentando descarga: %s", url)
+            logger.info("Attempting download: %s", url)
             resp = requests.get(url, headers=headers, timeout=120)
             resp.raise_for_status()
             ctype = resp.headers.get("Content-Type", "")
             text_head = resp.text[:200].lstrip()
             looks_geojson = "json" in ctype.lower() or text_head.startswith("{")
             if not looks_geojson or "FeatureCollection" not in resp.text[:2000]:
-                logger.warning("La respuesta de %s no parece GeoJSON; se descarta.", url)
+                logger.warning("Response from %s doesn't look like GeoJSON; discarding.", url)
                 continue
             target.write_bytes(resp.content)
-            logger.info("Descargado -> %s", target.name)
+            logger.info("Downloaded -> %s", target.name)
             return True
         except requests.RequestException as exc:
-            logger.warning("Fallo la descarga de %s (%s)", url, type(exc).__name__)
+            logger.warning("Download from %s failed (%s)", url, type(exc).__name__)
     return False
 
 
 def main() -> None:
     existing = next((p for p in config.ESTRATO_PATH_CANDIDATES if p.exists()), None)
     if existing:
-        logger.info("Ya existe un archivo de estrato local: %s. Nada que hacer.", existing.name)
+        logger.info("A local stratum file already exists: %s. Nothing to do.", existing.name)
         return
     if not try_download():
-        logger.warning("No se pudo descargar automaticamente el estrato.")
+        logger.warning("Could not automatically download the stratum data.")
         print(MANUAL_INSTRUCTIONS)
 
 

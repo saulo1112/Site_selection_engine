@@ -1,13 +1,13 @@
-"""ETAPA 3 — Carga de capas a PostGIS.
+"""STAGE 3 — Load layers into PostGIS.
 
-- Crea la base de datos `site_selection` si no existe y habilita PostGIS.
-- Carga las capas (POIs, grid, red vial y, si esta disponible, manzanas del censo)
-  con indices espaciales GIST.
+- Creates the `site_selection` database if it doesn't exist and enables PostGIS.
+- Loads the layers (POIs, grid, street network and, if available, census blocks)
+  with GIST spatial indexes.
 
-La conexion se lee de la variable de entorno DATABASE_URL, con fallback definido en
-src/config.py (puerto 5433; ver docker-compose.yml).
+The connection is read from the DATABASE_URL environment variable, with a fallback
+defined in src/config.py (port 5433; see docker-compose.yml).
 
-Ejecutar de forma independiente:
+Run standalone:
     uv run python -m src.data.db
 """
 
@@ -29,10 +29,10 @@ GEOM_COL = "geom"
 
 
 # --------------------------------------------------------------------------- #
-# Conexion / setup
+# Connection / setup
 # --------------------------------------------------------------------------- #
 def ensure_database() -> None:
-    """Crea la base de datos destino si no existe (conectando a `postgres`)."""
+    """Creates the target database if it doesn't exist (connecting to `postgres`)."""
     url = make_url(config.DATABASE_URL)
     dbname = url.database
     admin_engine = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
@@ -42,10 +42,10 @@ def ensure_database() -> None:
                 text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": dbname}
             ).scalar()
             if exists:
-                logger.info("Base de datos '%s' ya existe", dbname)
+                logger.info("Database '%s' already exists", dbname)
             else:
                 conn.execute(text(f'CREATE DATABASE "{dbname}"'))
-                logger.info("Base de datos '%s' creada", dbname)
+                logger.info("Database '%s' created", dbname)
     finally:
         admin_engine.dispose()
 
@@ -57,16 +57,16 @@ def get_engine() -> Engine:
 def ensure_postgis(engine: Engine) -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
-    logger.info("Extension PostGIS habilitada")
+    logger.info("PostGIS extension enabled")
 
 
 # --------------------------------------------------------------------------- #
-# Carga de capas
+# Layer loading
 # --------------------------------------------------------------------------- #
 def load_layer(gdf: gpd.GeoDataFrame, table: str, engine: Engine) -> None:
-    """Carga un GeoDataFrame a PostGIS (reemplaza) y crea indice GIST."""
+    """Loads a GeoDataFrame into PostGIS (replacing) and creates a GIST index."""
     if gdf.crs is None:
-        raise ValueError(f"GeoDataFrame para '{table}' sin CRS definido")
+        raise ValueError(f"GeoDataFrame for '{table}' has no CRS defined")
     gdf = gdf.to_crs("EPSG:4326").rename_geometry(GEOM_COL)
     gdf.to_postgis(table, engine, if_exists="replace", index=False)
     with engine.begin() as conn:
@@ -74,26 +74,26 @@ def load_layer(gdf: gpd.GeoDataFrame, table: str, engine: Engine) -> None:
             f"CREATE INDEX IF NOT EXISTS idx_{table}_geom "
             f"ON {table} USING GIST ({GEOM_COL})"
         ))
-    logger.info("Tabla '%s' cargada: %d filas (+ indice GIST)", table, len(gdf))
+    logger.info("Table '%s' loaded: %d rows (+ GIST index)", table, len(gdf))
 
 
 def load_geojson_layer(path: Path, table: str, engine: Engine) -> None:
     if not path.exists():
-        raise FileNotFoundError(f"Falta {path}; corre etapas previas (download/grid)")
+        raise FileNotFoundError(f"Missing {path}; run previous stages (download/grid)")
     load_layer(gpd.read_file(path), table, engine)
 
 
 def load_streets(engine: Engine) -> None:
-    """Carga las aristas de la red vial como tabla de lineas."""
+    """Loads the street network edges as a lines table."""
     if not config.STREETS_GRAPH_PATH.exists():
-        logger.warning("No existe %s; se omite la tabla 'streets' "
-                       "(densidad_vial quedara nula)", config.STREETS_GRAPH_PATH.name)
+        logger.warning("%s does not exist; skipping the 'streets' table "
+                       "(densidad_vial will remain null)", config.STREETS_GRAPH_PATH.name)
         return
     graph = ox.load_graphml(config.STREETS_GRAPH_PATH)
     edges = ox.graph_to_gdfs(graph, nodes=False, edges=True).reset_index()
     keep = [c for c in ("osmid", "name", "highway", "length", "geometry") if c in edges.columns]
     edges = edges[keep]
-    # osmid/highway/name pueden venir como listas -> convertir a str para PostGIS.
+    # osmid/highway/name may come as lists -> convert to str for PostGIS.
     for col in ("osmid", "highway", "name"):
         if col in edges.columns:
             edges[col] = edges[col].astype(str)
@@ -101,35 +101,35 @@ def load_streets(engine: Engine) -> None:
 
 
 def load_censo(engine: Engine) -> None:
-    """Carga manzanas del censo si hay un archivo local; si no, no bloquea."""
+    """Loads census blocks if a local file is available; otherwise doesn't block."""
     censo_file = next((p for p in config.CENSO_PATH_CANDIDATES if p.exists()), None)
     if censo_file is None:
         logger.warning(
-            "No se encontro archivo de censo (%s). Se omite 'manzanas_censo'. "
-            "Para habilitar features demograficas, ver src/data/load_censo.py.",
+            "Census file not found (%s). Skipping 'manzanas_censo'. "
+            "To enable demographic features, see src/data/load_censo.py.",
             ", ".join(p.name for p in config.CENSO_PATH_CANDIDATES),
         )
         return
-    logger.info("Cargando censo desde %s", censo_file.name)
+    logger.info("Loading census data from %s", censo_file.name)
     load_layer(gpd.read_file(censo_file), config.TABLES["manzanas_censo"], engine)
 
 
 def load_estrato(engine: Engine) -> None:
-    """Carga manzanas con estrato (IDECA) si hay un archivo local; si no, no bloquea."""
+    """Loads blocks with socioeconomic stratum (IDECA) if a local file is available; otherwise doesn't block."""
     estrato_file = next((p for p in config.ESTRATO_PATH_CANDIDATES if p.exists()), None)
     if estrato_file is None:
         logger.warning(
-            "No se encontro archivo de estrato (%s). Se omite 'manzanas_estrato'. "
-            "Para habilitar la feature de estrato, ver src/data/load_estrato.py.",
+            "Stratum file not found (%s). Skipping 'manzanas_estrato'. "
+            "To enable the stratum feature, see src/data/load_estrato.py.",
             ", ".join(p.name for p in config.ESTRATO_PATH_CANDIDATES),
         )
         return
-    logger.info("Cargando estrato desde %s", estrato_file.name)
+    logger.info("Loading stratum data from %s", estrato_file.name)
     load_layer(gpd.read_file(estrato_file), config.TABLES["manzanas_estrato"], engine)
 
 
 # --------------------------------------------------------------------------- #
-# Orquestacion
+# Orchestration
 # --------------------------------------------------------------------------- #
 def main() -> None:
     ensure_database()
@@ -143,7 +143,7 @@ def main() -> None:
         load_streets(engine)
         load_censo(engine)
         load_estrato(engine)
-        logger.info("ETAPA 3 completa.")
+        logger.info("STAGE 3 complete.")
     finally:
         engine.dispose()
 

@@ -1,30 +1,30 @@
-"""MODELO v2 — Clasificador look-alike (Regresion Logistica, con ML).
+"""MODEL v2 — Look-alike classifier (Logistic Regression, with ML).
 
-PROBLEMA DE CLASIFICACION (clases a predecir)
----------------------------------------------
-La etiqueta `tiene_d1` (calculada en la ETAPA 4) es binaria:
-  - Clase 1 (positiva): el hexagono YA tiene >=1 tienda D1 a <=300m -> "celda tipo-D1",
-    un sitio que D1 ya eligio.
-  - Clase 0 (negativa): el hexagono no tiene D1 cercano.
-El clasificador aprende, a partir de las features NO-D1 (competidores, complementarios,
-red vial y demografia si esta disponible), a estimar `P(clase=1)`. Esa probabilidad es el
-*score look-alike*: "que tan parecida es esta celda a las que D1 escogio". Con ese score
-se rankean todos los hexagonos.
+CLASSIFICATION PROBLEM (classes to predict)
+--------------------------------------------
+The `tiene_d1` label (computed in STAGE 4) is binary:
+  - Class 1 (positive): the hexagon ALREADY has >=1 D1 store within <=300m -> "D1-type
+    cell", a site D1 already chose.
+  - Class 0 (negative): the hexagon has no nearby D1.
+The classifier learns, from the non-D1 features (competitors, complementary businesses,
+road network and demographics if available), to estimate `P(class=1)`. That probability is
+the *look-alike score*: "how similar is this cell to the ones D1 chose". That score is used
+to rank all hexagons.
 
-Limitacion honesta (positive-unlabeled): las negativas mezclan sitios genuinamente malos
-con sitios buenos donde D1 aun no llega. Por eso el score es de *similitud / prioridad de
-exploracion*, NO una prediccion de desempeno (ver docs/metodologia.md §5).
+Honest limitation (positive-unlabeled): the negatives mix genuinely bad sites with good
+sites D1 simply hasn't reached yet. That's why the score reflects *similarity /
+exploration priority*, NOT a performance prediction (see docs/metodologia.md §5).
 
-Anti-leakage: las features derivadas de la ubicacion de D1 (`config.MCDA_LEAKAGE_COLS`)
-se EXCLUYEN de los predictores; usarlas seria leakage tautologico (la etiqueta es funcion
-de `n_d1_300m`).
+Anti-leakage: features derived from the D1 location (`config.MCDA_LEAKAGE_COLS`) are
+EXCLUDED from the predictors; using them would be tautological leakage (the label is a
+function of `n_d1_300m`).
 
-ADVERTENCIA METODOLOGICA (v2 es naive): el split train/test es ALEATORIO, por lo que
-hexagonos vecinos (espacialmente autocorrelacionados) caen a ambos lados -> las metricas
-estaran probablemente infladas por leakage espacial. v3 lo corrige con spatial CV y
-compara. Esto es intencional y se documenta.
+METHODOLOGICAL WARNING (v2 is naive): the train/test split is RANDOM, so neighboring
+hexagons (spatially autocorrelated) end up on both sides -> the metrics are likely
+inflated by spatial leakage. v3 fixes this with spatial CV and compares. This is
+intentional and documented.
 
-Ejecutar de forma independiente (requiere data/processed/features.parquet de la ETAPA 4):
+Run standalone (requires data/processed/features.parquet from STAGE 4):
     uv run python -m src.models.lookalike
 """
 
@@ -53,55 +53,55 @@ logger = get_logger(__name__)
 
 
 # --------------------------------------------------------------------------- #
-# Carga y seleccion de predictores
+# Loading and predictor selection
 # --------------------------------------------------------------------------- #
 def load_features() -> pd.DataFrame:
-    """Lee la tabla de features de la ETAPA 4."""
+    """Reads the features table from STAGE 4."""
     path = config.FEATURES_PARQUET_PATH
     if not path.exists():
         raise FileNotFoundError(
-            f"No existe {path}. Corre el pipeline de datos primero "
+            f"{path} does not exist. Run the data pipeline first "
             "(uv run python -m src.data.features)."
         )
     df = pd.read_parquet(path)
-    logger.info("Features cargadas: %d hexagonos, %d columnas", len(df), df.shape[1])
+    logger.info("Features loaded: %d hexagons, %d columns", len(df), df.shape[1])
     return df
 
 
 def select_predictors(df: pd.DataFrame) -> list[str]:
-    """Predictores no-leakage, presentes y con datos (descarta columnas 100% nulas)."""
+    """Non-leakage predictors, present and with data (drops 100% null columns)."""
     predictors: list[str] = []
     for col in config.MODEL_PREDICTOR_COLS:
-        if col in config.MCDA_LEAKAGE_COLS:  # defensa explicita anti-leakage
-            logger.warning("Excluida por LEAKAGE de los predictores: %s", col)
+        if col in config.MCDA_LEAKAGE_COLS:  # explicit anti-leakage guard
+            logger.warning("Excluded from predictors due to LEAKAGE: %s", col)
             continue
         if col not in df.columns:
-            logger.warning("Predictor ausente, se omite: %s", col)
+            logger.warning("Predictor missing, skipped: %s", col)
             continue
         if not df[col].notna().any():
-            logger.warning("Predictor 100%% nulo, se omite: %s", col)
+            logger.warning("Predictor 100%% null, skipped: %s", col)
             continue
         predictors.append(col)
     if not predictors:
-        raise RuntimeError("No quedaron predictores utilizables para el clasificador.")
+        raise RuntimeError("No usable predictors remained for the classifier.")
     excluded = sorted(set(config.MCDA_LEAKAGE_COLS))
-    logger.info("Predictores usados (%d): %s", len(predictors), ", ".join(predictors))
-    logger.info("Excluidos por leakage de D1: %s", ", ".join(excluded))
+    logger.info("Predictors used (%d): %s", len(predictors), ", ".join(predictors))
+    logger.info("Excluded due to D1 leakage: %s", ", ".join(excluded))
     return predictors
 
 
 # --------------------------------------------------------------------------- #
-# Modelo
+# Model
 # --------------------------------------------------------------------------- #
 def build_model() -> Pipeline:
-    """Regresion Logistica con imputacion + estandarizacion (LR es sensible a la escala).
+    """Logistic Regression with imputation + standardization (LR is scale-sensitive).
 
-    - `SimpleImputer(median)`: las features demograficas (censo/estrato, v4) tienen NULL
-      PARCIAL (manzanas no cubren todo el grid). La mediana se ajusta DENTRO de cada fold
-      (parte del Pipeline) -> sin fuga de informacion entre train y test. Para v2/v3,
-      cuyas features no tienen NaN, el imputer es un no-op inocuo.
-    - `class_weight='balanced'`: compensa el desbalance (~24.5% positivos) penalizando
-      mas los errores en la clase minoritaria.
+    - `SimpleImputer(median)`: the demographic features (census/stratum, v4) have
+      PARTIAL NULLs (city blocks don't cover the whole grid). The median is fit INSIDE
+      each fold (part of the Pipeline) -> no information leakage between train and test.
+      For v2/v3, whose features have no NaN, the imputer is a harmless no-op.
+    - `class_weight='balanced'`: compensates for the class imbalance (~24.5% positives)
+      by penalizing errors on the minority class more heavily.
     """
     return Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
@@ -115,7 +115,7 @@ def build_model() -> Pipeline:
 
 
 # --------------------------------------------------------------------------- #
-# Evaluacion
+# Evaluation
 # --------------------------------------------------------------------------- #
 def evaluate(
     model: Pipeline,
@@ -124,21 +124,21 @@ def evaluate(
     proba_all: np.ndarray,
     labels_all: np.ndarray,
 ) -> dict:
-    """Diagnostico de clasificacion (en test) + metricas de ranking (sobre todo el grid)."""
+    """Classification diagnostics (on test) + ranking metrics (over the whole grid)."""
     proba_test = model.predict_proba(X_test)[:, 1]
     pred_test = (proba_test >= 0.5).astype(int)
 
     report = classification_report(y_test, pred_test, digits=4,
-                                   target_names=["clase_0 (sin D1)", "clase_1 (tipo-D1)"],
+                                   target_names=["class_0 (no D1)", "class_1 (D1-type)"],
                                    zero_division=0)
-    cm = confusion_matrix(y_test, pred_test)            # filas=real, cols=pred
+    cm = confusion_matrix(y_test, pred_test)            # rows=actual, cols=predicted
     roc_auc = roc_auc_score(y_test, proba_test)
-    pr_auc = average_precision_score(y_test, proba_test)  # honesto con desbalance
+    pr_auc = average_precision_score(y_test, proba_test)  # honest under imbalance
 
     ranking = ranking_report(proba_all, labels_all, k=config.TOP_K)
 
-    logger.info("Clasificacion (test) -> ROC-AUC=%.4f | PR-AUC=%.4f", roc_auc, pr_auc)
-    logger.info("Ranking (grid completo) @K=%d -> NDCG=%.4f | hitting=%.4f | loss=%.4f",
+    logger.info("Classification (test) -> ROC-AUC=%.4f | PR-AUC=%.4f", roc_auc, pr_auc)
+    logger.info("Ranking (full grid) @K=%d -> NDCG=%.4f | hitting=%.4f | loss=%.4f",
                 int(ranking["k"]), ranking["ndcg_at_k"], ranking["topk_hitting"],
                 ranking["topk_loss"])
     return {
@@ -153,9 +153,9 @@ def evaluate(
 
 
 def coefficients_table(model: Pipeline, predictors: list[str]) -> pd.DataFrame:
-    """Coeficientes de la LR por feature (sobre features estandarizadas -> comparables).
+    """LR coefficients per feature (over standardized features -> comparable).
 
-    Signo = direccion del efecto sobre P(tipo-D1); magnitud = importancia relativa.
+    Sign = direction of the effect on P(D1-type); magnitude = relative importance.
     """
     coefs = model.named_steps["clf"].coef_[0]
     tbl = pd.DataFrame({"feature": predictors, "coef": coefs})
@@ -164,10 +164,10 @@ def coefficients_table(model: Pipeline, predictors: list[str]) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
-# Resumen
+# Summary
 # --------------------------------------------------------------------------- #
 def _read_v1_metrics() -> dict[str, float]:
-    """Lee NDCG/Precision@K de v1 (MCDA) desde su ranking, para comparar v1 vs v2."""
+    """Reads v1 (MCDA) NDCG/Precision@K from its ranking, to compare v1 vs v2."""
     path = config.MCDA_RANKING_PARQUET_PATH
     if not path.exists():
         return {}
@@ -201,79 +201,79 @@ def write_summary(
     ]
 
     lines = [
-        "# Resultados v2 — Clasificador look-alike (Regresion Logistica)\n",
-        f"_Generado por `src/models/lookalike.py`. Total de hexagonos: **{len(df)}**._\n",
-        "## Clases a predecir\n",
-        "Clasificacion **binaria** sobre la etiqueta `tiene_d1` (calculada en la ETAPA 4):\n",
-        "- **Clase 1 (positiva, ~24.5%):** el hexagono YA tiene >=1 tienda D1 a <=300m "
-        "(\"celda tipo-D1\", un sitio que D1 ya eligio).",
-        "- **Clase 0 (negativa):** el hexagono no tiene D1 cercano.\n",
-        "El modelo estima `P(clase=1)` a partir de las features **no-D1** y ese "
-        "probabilistico es el **score look-alike** con el que se rankean los hexagonos.\n",
-        "## Predictores (anti-leakage)\n",
-        f"Se usan **{len(predictors)}** features: `{'`, `'.join(predictors)}`.\n",
-        "Se **excluyen** las derivadas de D1 "
-        f"(`{'`, `'.join(config.MCDA_LEAKAGE_COLS)}`): la etiqueta es funcion directa de "
-        "ellas, usarlas seria leakage tautologico.",
+        "# Results v2 — Look-alike classifier (Logistic Regression)\n",
+        f"_Generated by `src/models/lookalike.py`. Total hexagons: **{len(df)}**._\n",
+        "## Classes to predict\n",
+        "**Binary** classification over the `tiene_d1` label (computed in STAGE 4):\n",
+        "- **Class 1 (positive, ~24.5%):** the hexagon ALREADY has >=1 D1 store within "
+        "<=300m (\"D1-type cell\", a site D1 already chose).",
+        "- **Class 0 (negative):** the hexagon has no nearby D1.\n",
+        "The model estimates `P(class=1)` from the **non-D1** features, and that "
+        "probability is the **look-alike score** used to rank the hexagons.\n",
+        "## Predictors (anti-leakage)\n",
+        f"**{len(predictors)}** features are used: `{'`, `'.join(predictors)}`.\n",
+        "The features derived from D1 are **excluded** "
+        f"(`{'`, `'.join(config.MCDA_LEAKAGE_COLS)}`): the label is a direct function of "
+        "them, using them would be tautological leakage.",
     ]
     if excluded_demo:
         lines.append(
-            f"Las demograficas (`{'`, `'.join(excluded_demo)}`) no estan disponibles "
-            "(censo DANE no cargado, ver `src/data/load_censo.py`) y quedan fuera.\n"
+            f"The demographic features (`{'`, `'.join(excluded_demo)}`) are not available "
+            "(DANE census not loaded, see `src/data/load_censo.py`) and are left out.\n"
         )
     else:
         lines.append("")
 
     lines += [
-        "## Particion (v2 = split aleatorio, naive)\n",
-        f"Split **aleatorio estratificado** {int((1 - config.TEST_SIZE) * 100)}/"
+        "## Split (v2 = random split, naive)\n",
+        f"**Stratified random** split {int((1 - config.TEST_SIZE) * 100)}/"
         f"{int(config.TEST_SIZE * 100)} (`random_state={config.RANDOM_STATE}`). "
-        "**Advertencia:** el split aleatorio reparte hexagonos vecinos "
-        "(espacialmente autocorrelacionados) entre train y test, por lo que las metricas "
-        "probablemente esten **infladas por leakage espacial**. v3 lo corrige con "
-        "spatial CV y compara (ver docs/metodologia.md §6).\n",
-        "## Diagnostico de clasificacion (conjunto de test)\n",
+        "**Warning:** the random split scatters neighboring hexagons "
+        "(spatially autocorrelated) between train and test, so the metrics are "
+        "likely **inflated by spatial leakage**. v3 fixes this with "
+        "spatial CV and compares (see docs/metodologia.md §6).\n",
+        "## Classification diagnostics (test set)\n",
         f"- **ROC-AUC**: {results['roc_auc']:.4f}",
-        f"- **PR-AUC** (average precision, mas honesta con clases desbalanceadas): "
+        f"- **PR-AUC** (average precision, more honest under class imbalance): "
         f"{results['pr_auc']:.4f}",
-        f"- Test: {results['n_test']} hexagonos, {results['pos_rate_test'] * 100:.1f}% positivos.\n",
-        "**Matriz de confusion** (umbral 0.5; filas = real, columnas = predicho):\n",
+        f"- Test: {results['n_test']} hexagons, {results['pos_rate_test'] * 100:.1f}% positives.\n",
+        "**Confusion matrix** (threshold 0.5; rows = actual, columns = predicted):\n",
         "| | pred 0 | pred 1 |",
         "|---|---|---|",
-        f"| **real 0** | {cm[0, 0]} | {cm[0, 1]} |",
-        f"| **real 1** | {cm[1, 0]} | {cm[1, 1]} |",
-        "\n**Reporte por clase** (precision / recall / F1):\n",
+        f"| **actual 0** | {cm[0, 0]} | {cm[0, 1]} |",
+        f"| **actual 1** | {cm[1, 0]} | {cm[1, 1]} |",
+        "\n**Per-class report** (precision / recall / F1):\n",
         "```",
         results["classification_report"].rstrip(),
         "```\n",
-        "## Interpretabilidad — coeficientes de la LR\n",
-        "Sobre features estandarizadas (comparables entre si). Signo = direccion del "
-        "efecto sobre `P(tipo-D1)`; magnitud = importancia relativa.\n",
+        "## Interpretability — LR coefficients\n",
+        "Over standardized features (comparable to each other). Sign = direction of the "
+        "effect on `P(D1-type)`; magnitude = relative importance.\n",
         coefs.round(4).to_markdown(index=False),
-        "\n## Metricas de ranking (sobre todo el grid)\n",
+        "\n## Ranking metrics (over the whole grid)\n",
         f"- **NDCG@{k}**: {rk['ndcg_at_k']:.4f}",
         f"- **Precision@{k}**: {precision_v2:.4f}",
         f"- **top-{k} hitting**: {rk['topk_hitting']:.4f} / **loss**: {rk['topk_loss']:.4f}\n",
-        "## Comparacion v1 (MCDA) vs v2 (LR)\n",
-        "| Metrica | v1 MCDA | v2 LR |",
+        "## Comparison v1 (MCDA) vs v2 (LR)\n",
+        "| Metric | v1 MCDA | v2 LR |",
         "|---|---|---|",
         *comparison_rows,
-        "\n> **Lectura honesta:** si v2 no supera materialmente a v1, es un resultado "
-        "valido: el MCDA ya captura casi toda la senal lineal disponible. Y recordar que "
-        "cualquier ventaja de v2 aqui puede ser, en parte, leakage espacial -> v3 dira "
-        "cuanto se sostiene.\n",
-        "## Limitacion\n",
-        "Problema **positive-unlabeled**: las negativas incluyen buenos sitios donde D1 "
-        "aun no llega. El score es de **similitud / prioridad de exploracion**, no de "
-        "desempeno; hereda el supuesto de que la estrategia de localizacion de D1 es buena "
+        "\n> **Honest reading:** if v2 doesn't materially beat v1, that's a valid "
+        "result: the MCDA already captures almost all of the available linear signal. "
+        "And keep in mind that any advantage v2 shows here may partly be spatial "
+        "leakage -> v3 will tell how much of it holds up.\n",
+        "## Limitation\n",
+        "**Positive-unlabeled** problem: the negatives include good sites D1 simply "
+        "hasn't reached yet. The score reflects **similarity / exploration priority**, not "
+        "performance; it inherits the assumption that D1's location strategy is good "
         "(docs/metodologia.md §5).\n",
     ]
     config.LOOKALIKE_V2_SUMMARY_PATH.write_text("\n".join(lines), encoding="utf-8")
-    logger.info("Resumen escrito -> %s", config.LOOKALIKE_V2_SUMMARY_PATH.name)
+    logger.info("Summary written -> %s", config.LOOKALIKE_V2_SUMMARY_PATH.name)
 
 
 # --------------------------------------------------------------------------- #
-# Orquestacion
+# Orchestration
 # --------------------------------------------------------------------------- #
 def main() -> None:
     config.DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
@@ -287,20 +287,20 @@ def main() -> None:
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=config.TEST_SIZE, random_state=config.RANDOM_STATE, stratify=y,
     )
-    logger.info("Split aleatorio estratificado: train=%d, test=%d", len(X_train), len(X_test))
+    logger.info("Stratified random split: train=%d, test=%d", len(X_train), len(X_test))
 
     model = build_model()
     model.fit(X_train, y_train)
-    logger.info("Modelo entrenado: %s", model.named_steps["clf"].__class__.__name__)
+    logger.info("Model trained: %s", model.named_steps["clf"].__class__.__name__)
 
-    # Score look-alike para TODO el grid (P(clase=1)).
+    # Look-alike score for the WHOLE grid (P(class=1)).
     proba_all = model.predict_proba(X)[:, 1]
     labels_all = y.to_numpy()
 
     results = evaluate(model, X_test, y_test, proba_all, labels_all)
     coefs = coefficients_table(model, predictors)
 
-    # Ranking de salida.
+    # Output ranking.
     ranking = df[["h3_index", "lat_centroid", "lon_centroid", config.LABEL_COL]].copy()
     ranking["score_lookalike"] = proba_all
     ranking["rank_lookalike"] = (
@@ -312,12 +312,12 @@ def main() -> None:
     ranking.to_parquet(config.LOOKALIKE_V2_RANKING_PARQUET_PATH, index=False)
     ranking.to_csv(config.LOOKALIKE_V2_RANKING_CSV_PATH, index=False)
     joblib.dump(model, config.LOOKALIKE_V2_MODEL_PATH)
-    logger.info("Ranking -> %s (+ .csv) | modelo -> %s",
+    logger.info("Ranking -> %s (+ .csv) | model -> %s",
                 config.LOOKALIKE_V2_RANKING_PARQUET_PATH.name,
                 config.LOOKALIKE_V2_MODEL_PATH.name)
 
     write_summary(df, predictors, results, coefs, precision_v2)
-    logger.info("v2 (look-alike LR) completo.")
+    logger.info("v2 (look-alike LR) complete.")
 
 
 if __name__ == "__main__":

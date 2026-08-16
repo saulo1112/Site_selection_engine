@@ -1,6 +1,6 @@
-# Imagen de la API de inferencia (FastAPI). Serving desacoplado de PostGIS:
-# solo necesita los artefactos versionados (rankings parquet, .joblib, GeoJSON POIs).
-# Host objetivo: Render (free tier) o Hugging Face Spaces (Docker). Ver docs/despliegue.md.
+# Inference API image (FastAPI). Serving decoupled from PostGIS:
+# only needs the versioned artifacts (parquet rankings, .joblib, GeoJSON POIs).
+# Target host: Render (free tier) or Hugging Face Spaces (Docker). See docs/despliegue.md.
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Dependencias minimas de serving (imagen liviana; NO instala osmnx/geopandas/postgis).
+# Minimal serving dependencies (lightweight image; does NOT install osmnx/geopandas/postgis).
 RUN pip install \
     "fastapi>=0.110" \
     "uvicorn[standard]>=0.29" \
@@ -19,16 +19,16 @@ RUN pip install \
     "h3>=4.0" \
     "joblib>=1.3"
 
-# Codigo + artefactos necesarios para servir.
+# Code + artifacts needed to serve.
 COPY src/ ./src/
 COPY data/processed/ ./data/processed/
-# POIs (GeoJSON) para los overlays del frontend; opcional.
+# POIs (GeoJSON) for the frontend overlays; optional.
 COPY data/raw/pois_*.geojson ./data/raw/
 
-# Modelo servido por defecto (override en el host).
+# Default served model (override on the host).
 ENV SERVING_MODEL=v3
 
-# Render/HF inyectan $PORT; default 8000 en local.
+# Render/HF inject $PORT; defaults to 8000 locally.
 ENV PORT=8000
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT}"]

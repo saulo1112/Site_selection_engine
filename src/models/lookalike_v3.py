@@ -1,22 +1,23 @@
-"""MODELO v3 — Clasificador look-alike con SPATIAL CROSS-VALIDATION.
+"""MODEL v3 — Look-alike classifier with SPATIAL CROSS-VALIDATION.
 
-Mismo modelo que v2 (Regresion Logistica), pero evaluado con validacion cruzada
-ESPACIAL en vez de un split aleatorio. Objetivo: una estimacion HONESTA de
-generalizacion y cuantificar cuanto del desempeno de v2 era leakage por autocorrelacion
-espacial (celdas vecinas repartidas entre train y test).
+Same model as v2 (Logistic Regression), but evaluated with SPATIAL cross-validation
+instead of a random split. Goal: an HONEST estimate of generalization, and to quantify
+how much of v2's performance was leakage from spatial autocorrelation (neighboring
+cells scattered between train and test).
 
-Como funciona (ver src/models/spatial_cv.py):
-  - Bloques espaciales = padre H3 a resolucion gruesa; bloques enteros van a train o test.
-  - StratifiedGroupKFold reparte bloques en folds (balanceando positivos).
-  - Buffer: se excluyen del train las celdas a <=k anillos de cualquier celda de test.
-  - Se ensamblan predicciones OUT-OF-FOLD (OOF): cada celda la predice un modelo que NO
-    vio su vecindario -> las metricas OOF son la evaluacion honesta de v3.
+How it works (see src/models/spatial_cv.py):
+  - Spatial blocks = H3 parent at a coarse resolution; whole blocks go to train or test.
+  - StratifiedGroupKFold distributes blocks into folds (balancing positives).
+  - Buffer: cells within <=k rings of any test cell are excluded from train.
+  - OUT-OF-FOLD (OOF) predictions are assembled: each cell is predicted by a model that
+    did NOT see its neighborhood -> the OOF metrics are v3's honest evaluation.
 
-Anti-leakage (tres capas): (1) predictores sin columnas D1 y competencia solo no-D1;
-(2) StandardScaler ajustado dentro de cada fold (Pipeline) -> sin fuga de escalado;
-(3) bloques espaciales + buffer -> train y test no comparten vecindario.
+Anti-leakage (three layers): (1) predictors with no D1 columns and competition
+features are non-D1 only; (2) StandardScaler fit inside each fold (Pipeline) -> no
+scaling leakage; (3) spatial blocks + buffer -> train and test don't share a
+neighborhood.
 
-Ejecutar (requiere data/processed/features.parquet de la ETAPA 4):
+Run (requires data/processed/features.parquet from STAGE 4):
     uv run python -m src.models.lookalike_v3
 """
 
@@ -49,10 +50,10 @@ logger = get_logger(__name__)
 
 
 # --------------------------------------------------------------------------- #
-# Evaluacion generica de un vector de scores contra la etiqueta
+# Generic evaluation of a score vector against the label
 # --------------------------------------------------------------------------- #
 def evaluate_scores(y_true: npt.ArrayLike, proba: npt.ArrayLike, k: int) -> dict:
-    """Diagnostico de clasificacion (umbral 0.5) + metricas de ranking sobre un score."""
+    """Classification diagnostics (threshold 0.5) + ranking metrics over a score."""
     y = np.asarray(y_true, dtype=np.int_)
     p = np.asarray(proba, dtype=np.float64)
     pred = (p >= 0.5).astype(int)
@@ -62,22 +63,22 @@ def evaluate_scores(y_true: npt.ArrayLike, proba: npt.ArrayLike, k: int) -> dict
         "confusion_matrix": confusion_matrix(y, pred),
         "classification_report": classification_report(
             y, pred, digits=4,
-            target_names=["clase_0 (sin D1)", "clase_1 (tipo-D1)"], zero_division=0,
+            target_names=["class_0 (no D1)", "class_1 (D1-type)"], zero_division=0,
         ),
         "ranking": ranking_report(p, y, k=k),
     }
 
 
 # --------------------------------------------------------------------------- #
-# Predicciones out-of-fold con spatial CV
+# Out-of-fold predictions with spatial CV
 # --------------------------------------------------------------------------- #
 def spatial_cv_oof(
     df: pd.DataFrame, predictors: list[str],
 ) -> tuple[np.ndarray, list[dict]]:
-    """Ensambla predicciones OOF P(clase=1) con folds espaciales + buffer.
+    """Assembles OOF P(class=1) predictions with spatial folds + buffer.
 
-    Devuelve (proba_oof alineado con df, info por fold). Verifica que cada celda se
-    predice exactamente una vez y que ninguna celda de test esta en su propio train.
+    Returns (proba_oof aligned with df, per-fold info). Verifies that each cell is
+    predicted exactly once and that no test cell is in its own train set.
     """
     h3_indices = df["h3_index"].tolist()
     X = df[predictors].to_numpy()
@@ -95,8 +96,8 @@ def spatial_cv_oof(
         random_state=config.RANDOM_STATE,
     )
     for i, (train_idx, test_idx, n_removed) in enumerate(folds, start=1):
-        # Anti-leakage: ninguna celda de test puede estar en su train.
-        assert not set(test_idx) & set(train_idx), "solapamiento train/test en el fold"
+        # Anti-leakage: no test cell can be in its own train set.
+        assert not set(test_idx) & set(train_idx), "train/test overlap in the fold"
 
         model = build_model()
         model.fit(X[train_idx], y[train_idx])
@@ -111,19 +112,19 @@ def spatial_cv_oof(
             "test_positivos": int(y[test_idx].sum()),
         }
         fold_info.append(info)
-        logger.info("Fold %d -> train=%d, test=%d (pos=%d), buffer removio %d celdas",
+        logger.info("Fold %d -> train=%d, test=%d (pos=%d), buffer removed %d cells",
                     i, info["n_train"], info["n_test"], info["test_positivos"], n_removed)
 
     if not covered.all():
-        raise RuntimeError(f"{(~covered).sum()} celdas sin prediccion OOF (cobertura incompleta).")
+        raise RuntimeError(f"{(~covered).sum()} cells have no OOF prediction (incomplete coverage).")
     return proba_oof, fold_info
 
 
 # --------------------------------------------------------------------------- #
-# Metricas de v2 (split aleatorio) para la comparacion honesta
+# v2 metrics (random split) for the honest comparison
 # --------------------------------------------------------------------------- #
 def v2_random_split_metrics(df: pd.DataFrame, predictors: list[str]) -> dict:
-    """Reproduce la evaluacion de v2 (split aleatorio) para comparar contra v3."""
+    """Reproduces v2's evaluation (random split) to compare against v3."""
     X = df[predictors]
     y = df[config.LABEL_COL].astype(int)
     X_tr, X_te, y_tr, y_te = train_test_split(
@@ -131,15 +132,15 @@ def v2_random_split_metrics(df: pd.DataFrame, predictors: list[str]) -> dict:
     )
     model = build_model()
     model.fit(X_tr, y_tr)
-    proba_te = model.predict_proba(X_te)[:, 1]      # diagnostico en test aleatorio
-    proba_all = model.predict_proba(X)[:, 1]        # ranking sobre el grid (como v2)
+    proba_te = model.predict_proba(X_te)[:, 1]      # diagnostics on the random test set
+    proba_all = model.predict_proba(X)[:, 1]        # ranking over the grid (like v2)
     res = evaluate_scores(y_te, proba_te, k=config.TOP_K)
     res["ranking"] = ranking_report(proba_all, y.to_numpy(), k=config.TOP_K)
     return res
 
 
 # --------------------------------------------------------------------------- #
-# Resumen
+# Summary
 # --------------------------------------------------------------------------- #
 def write_summary(
     df: pd.DataFrame,
@@ -157,8 +158,8 @@ def write_summary(
 
     def _delta(a: float, b: float) -> str:
         d = b - a
-        signo = "+" if d >= 0 else ""
-        return f"{signo}{d:.4f}"
+        sign = "+" if d >= 0 else ""
+        return f"{sign}{d:.4f}"
 
     fold_rows = [
         f"| {fi['fold']} | {fi['n_train']} | {fi['n_test']} | {fi['test_positivos']} | "
@@ -173,85 +174,86 @@ def write_summary(
     ]
 
     lines = [
-        "# Resultados v3 — Clasificador look-alike con Spatial CV\n",
-        f"_Generado por `src/models/lookalike_v3.py`. Total de hexagonos: **{len(df)}**._\n",
-        "## Que cambia respecto a v2\n",
-        "**Mismo modelo** (Regresion Logistica), **misma definicion de clases** "
-        "(clase 1 = celda con D1 a <=300m). Lo unico que cambia es la **validacion**: en "
-        "vez de un split aleatorio, validacion cruzada **espacial**. Cada hexagono se "
-        "predice *out-of-fold* (OOF) por un modelo que no vio su vecindario -> estimacion "
-        "honesta de como generaliza el modelo a zonas nuevas de la ciudad.\n",
-        "## Esquema de spatial CV (anti-leakage espacial)\n",
-        f"- **Bloques espaciales**: padre H3 a resolucion **{config.SPATIAL_CV_BLOCK_RES}** "
-        f"-> {n_blocks} bloques (~36 km2 c/u). Bloques enteros van a train o test.",
+        "# Results v3 — Look-alike classifier with Spatial CV\n",
+        f"_Generated by `src/models/lookalike_v3.py`. Total hexagons: **{len(df)}**._\n",
+        "## What changes from v2\n",
+        "**Same model** (Logistic Regression), **same class definition** "
+        "(class 1 = cell with D1 within <=300m). The only thing that changes is the "
+        "**validation**: instead of a random split, **spatial** cross-validation. Each "
+        "hexagon is predicted *out-of-fold* (OOF) by a model that never saw its "
+        "neighborhood -> an honest estimate of how the model generalizes to new areas of "
+        "the city.\n",
+        "## Spatial CV scheme (anti spatial-leakage)\n",
+        f"- **Spatial blocks**: H3 parent at resolution **{config.SPATIAL_CV_BLOCK_RES}** "
+        f"-> {n_blocks} blocks (~36 km2 each). Whole blocks go to train or test.",
         f"- **Folds**: StratifiedGroupKFold, **{config.SPATIAL_CV_FOLDS}** folds "
-        "(respeta bloques, balancea positivos).",
-        f"- **Buffer**: se excluyen del train las celdas a <=**{config.SPATIAL_CV_BUFFER_RINGS}** "
-        "anillo(s) H3 de cualquier celda de test.",
-        f"- **Predictores** (sin leakage): `{'`, `'.join(predictors)}`.\n",
-        "**Tamanos por fold:**\n",
-        "| Fold | Train | Test | Test pos. | Buffer removidas |",
+        "(respects blocks, balances positives).",
+        f"- **Buffer**: cells within <=**{config.SPATIAL_CV_BUFFER_RINGS}** H3 "
+        "ring(s) of any test cell are excluded from train.",
+        f"- **Predictors** (no leakage): `{'`, `'.join(predictors)}`.\n",
+        "**Sizes per fold:**\n",
+        "| Fold | Train | Test | Test pos. | Buffer removed |",
         "|---|---|---|---|---|",
         *fold_rows,
-        "\n## Diagnostico honesto (predicciones OOF)\n",
+        "\n## Honest diagnostics (OOF predictions)\n",
         f"- **ROC-AUC**: {oof['roc_auc']:.4f}",
         f"- **PR-AUC**: {oof['pr_auc']:.4f}",
         f"- **NDCG@{k}**: {oof['ranking']['ndcg_at_k']:.4f} | "
         f"**Precision@{k}**: {precision_v3:.4f} | "
         f"**top-{k} hitting**: {oof['ranking']['topk_hitting']:.4f}\n",
-        "**Matriz de confusion OOF** (umbral 0.5; filas = real, columnas = predicho):\n",
+        "**OOF confusion matrix** (threshold 0.5; rows = actual, columns = predicted):\n",
         "| | pred 0 | pred 1 |",
         "|---|---|---|",
-        f"| **real 0** | {cm[0, 0]} | {cm[0, 1]} |",
-        f"| **real 1** | {cm[1, 0]} | {cm[1, 1]} |",
-        "\n**Reporte por clase (OOF):**\n",
+        f"| **actual 0** | {cm[0, 0]} | {cm[0, 1]} |",
+        f"| **actual 1** | {cm[1, 0]} | {cm[1, 1]} |",
+        "\n**Per-class report (OOF):**\n",
         "```",
         oof["classification_report"].rstrip(),
         "```\n",
-        "## Veredicto de leakage — v2 (split aleatorio) vs v3 (spatial CV)\n",
-        "| Metrica | v2 aleatorio | v3 spatial CV | Δ (v3 - v2) |",
+        "## Leakage verdict — v2 (random split) vs v3 (spatial CV)\n",
+        "| Metric | v2 random | v3 spatial CV | Δ (v3 - v2) |",
         "|---|---|---|---|",
         *[f"| {nm} | {a:.4f} | {b:.4f} | {_delta(a, b)} |" for nm, a, b in comp_rows],
         "",
         _verdict_text(v2, oof),
-        "\n## Interpretabilidad — coeficientes del modelo final (full-data)\n",
-        "El ranking de produccion usa un modelo reentrenado con **todos** los datos; el "
-        "desempeno reportado arriba viene de las OOF (no de este ajuste full-data).\n",
+        "\n## Interpretability — final model coefficients (full-data)\n",
+        "The production ranking uses a model retrained on **all** the data; the "
+        "performance reported above comes from the OOF predictions (not this full-data fit).\n",
         coefs.round(4).to_markdown(index=False),
-        "\n## Limitacion\n",
-        "Sigue siendo un score de **similitud / prioridad de exploracion** (no de "
-        "desempeno), con el supuesto look-alike de que la localizacion de D1 es buena "
-        "(docs/metodologia.md §5). La spatial CV corrige el leakage espacial, no los "
-        "sesgos del proxy ni del etiquetado OSM.\n",
+        "\n## Limitation\n",
+        "It's still a **similarity / exploration priority** score (not "
+        "performance), with the look-alike assumption that D1's siting is good "
+        "(docs/metodologia.md §5). Spatial CV fixes the spatial leakage, not the "
+        "biases from the proxy or the OSM labeling.\n",
     ]
     config.LOOKALIKE_V3_SUMMARY_PATH.write_text("\n".join(lines), encoding="utf-8")
-    logger.info("Resumen escrito -> %s", config.LOOKALIKE_V3_SUMMARY_PATH.name)
+    logger.info("Summary written -> %s", config.LOOKALIKE_V3_SUMMARY_PATH.name)
 
 
 def _verdict_text(v2: dict, oof: dict) -> str:
-    # Convencion consistente con la tabla: Delta = v3(OOF) - v2(aleatorio).
+    # Convention consistent with the table: Delta = v3(OOF) - v2(random).
     d_ndcg = oof["ranking"]["ndcg_at_k"] - v2["ranking"]["ndcg_at_k"]
     d_auc = oof["roc_auc"] - v2["roc_auc"]
     if d_ndcg < -0.02 or d_auc < -0.02:
         return (
-            "> **Veredicto:** el desempeno **cae** al pasar a spatial CV "
-            f"(Δ NDCG@K {d_ndcg:+.4f}, Δ ROC-AUC {d_auc:+.4f}). Esto **confirma** que "
-            "parte de las metricas de v2 estaban infladas por leakage de autocorrelacion "
-            "espacial; v3 es la estimacion honesta de generalizacion."
+            "> **Verdict:** performance **drops** when moving to spatial CV "
+            f"(Δ NDCG@K {d_ndcg:+.4f}, Δ ROC-AUC {d_auc:+.4f}). This **confirms** that "
+            "part of v2's metrics were inflated by spatial-autocorrelation leakage; v3 is "
+            "the honest generalization estimate."
         )
     return (
-        "> **Veredicto:** el desempeno **se mantiene** bajo spatial CV "
-        f"(Δ NDCG@K {d_ndcg:+.4f}, Δ ROC-AUC {d_auc:+.4f}; v3 incluso iguala o supera "
-        "levemente a v2). El leakage por autocorrelacion espacial resulto **menor de lo "
-        "esperado**: con un modelo lineal sobre features de buffer (campos espaciales "
-        "suaves), un split aleatorio y uno espacial generalizan parecido. Es un hallazgo "
-        "valido y honesto — la senal no-D1 (competencia/complementarios/vial) se sostiene "
-        "en zonas no vistas, no era un espejismo del split."
+        "> **Verdict:** performance **holds up** under spatial CV "
+        f"(Δ NDCG@K {d_ndcg:+.4f}, Δ ROC-AUC {d_auc:+.4f}; v3 even matches or slightly "
+        "beats v2). Leakage from spatial autocorrelation turned out **smaller than "
+        "expected**: with a linear model over buffer-based features (smooth spatial "
+        "fields), a random split and a spatial split generalize similarly. This is a "
+        "valid and honest finding — the non-D1 signal (competition/complementary/road "
+        "network) holds up in unseen areas, it wasn't a mirage of the split."
     )
 
 
 # --------------------------------------------------------------------------- #
-# Orquestacion
+# Orchestration
 # --------------------------------------------------------------------------- #
 def main() -> None:
     config.DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
@@ -260,7 +262,7 @@ def main() -> None:
     predictors = select_predictors(df)
     y = df[config.LABEL_COL].astype(int)
 
-    logger.info("Spatial CV: res padre=%d, folds=%d, buffer=%d anillo(s)",
+    logger.info("Spatial CV: parent res=%d, folds=%d, buffer=%d ring(s)",
                 config.SPATIAL_CV_BLOCK_RES, config.SPATIAL_CV_FOLDS,
                 config.SPATIAL_CV_BUFFER_RINGS)
     proba_oof, fold_info = spatial_cv_oof(df, predictors)
@@ -269,18 +271,18 @@ def main() -> None:
                 oof["roc_auc"], oof["pr_auc"], config.TOP_K, oof["ranking"]["ndcg_at_k"])
 
     v2 = v2_random_split_metrics(df, predictors)
-    logger.info("v2 (aleatorio) -> ROC-AUC=%.4f | NDCG@%d=%.4f (para comparar)",
+    logger.info("v2 (random) -> ROC-AUC=%.4f | NDCG@%d=%.4f (for comparison)",
                 v2["roc_auc"], config.TOP_K, v2["ranking"]["ndcg_at_k"])
 
-    # Modelo final full-data para el ranking de produccion.
+    # Final full-data model for the production ranking.
     final_model = build_model()
     final_model.fit(df[predictors], y)
     score_prod = final_model.predict_proba(df[predictors])[:, 1]
     coefs = coefficients_table(final_model, predictors)
 
     ranking = df[["h3_index", "lat_centroid", "lon_centroid", config.LABEL_COL]].copy()
-    ranking["score_lookalike_v3"] = score_prod   # produccion (modelo full-data)
-    ranking["score_oof"] = proba_oof             # honesto (transparencia)
+    ranking["score_lookalike_v3"] = score_prod   # production (full-data model)
+    ranking["score_oof"] = proba_oof             # honest (transparency)
     ranking["rank_lookalike_v3"] = (
         ranking["score_lookalike_v3"].rank(ascending=False, method="first").astype(int)
     )
@@ -288,17 +290,17 @@ def main() -> None:
     precision_v3 = float(
         df.assign(p=proba_oof).sort_values("p", ascending=False)
         .head(config.TOP_K)[config.LABEL_COL].mean()
-    )  # Precision@K honesta (sobre OOF)
+    )  # Honest Precision@K (over OOF)
 
     ranking.to_parquet(config.LOOKALIKE_V3_RANKING_PARQUET_PATH, index=False)
     ranking.to_csv(config.LOOKALIKE_V3_RANKING_CSV_PATH, index=False)
     joblib.dump(final_model, config.LOOKALIKE_V3_MODEL_PATH)
-    logger.info("Ranking -> %s (+ .csv) | modelo -> %s",
+    logger.info("Ranking -> %s (+ .csv) | model -> %s",
                 config.LOOKALIKE_V3_RANKING_PARQUET_PATH.name,
                 config.LOOKALIKE_V3_MODEL_PATH.name)
 
     write_summary(df, predictors, oof, v2, fold_info, coefs, precision_v3)
-    logger.info("v3 (spatial CV) completo.")
+    logger.info("v3 (spatial CV) complete.")
 
 
 if __name__ == "__main__":

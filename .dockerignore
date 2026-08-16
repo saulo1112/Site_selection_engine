@@ -1,4 +1,4 @@
-# El ETL pesado no entra en la imagen de la API (serving desacoplado de PostGIS).
+# The heavy ETL does not go into the API image (serving decoupled from PostGIS).
 .git/
 .venv/
 cache/
@@ -6,7 +6,7 @@ docs/
 app/
 **/__pycache__/
 *.pyc
-# Datos crudos pesados (la API solo necesita pois_*.geojson, copiados explicitamente).
+# Heavy raw data (the API only needs pois_*.geojson, copied explicitly).
 data/raw/*.graphml
 data/raw/*.zip
 data/raw/manzanas_*

@@ -1,11 +1,11 @@
-"""Configuracion del proyecto Site Selection Engine.
+"""Configuration for the Site Selection Engine project.
 
-Define las ciudades candidatas para el chequeo de disponibilidad de datos,
-los endpoints de Overpass/Nominatim y las constantes de cortesia de red.
+Defines the candidate cities for the data-availability check,
+the Overpass/Nominatim endpoints, and the network courtesy constants.
 
-Las ciudades se delimitan por su FRONTERA ADMINISTRATIVA en OSM (relacion del
-municipio/distrito), no por bounding box, para obtener conteos honestos dentro
-de los limites urbanos reales (ver docs/seleccion_area_estudio.md).
+Cities are delimited by their ADMINISTRATIVE BOUNDARY in OSM (relation of the
+municipality/district), not by bounding box, to get honest counts within the
+real urban limits (see docs/seleccion_area_estudio.md).
 """
 
 from __future__ import annotations
@@ -13,36 +13,36 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-# --- Rutas del proyecto ---
+# --- Project paths ---
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_RAW = PROJECT_ROOT / "data" / "raw"
 DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
 DOCS = PROJECT_ROOT / "docs"
 
 # --- Endpoints ---
-# Overpass: endpoint principal + fallback (rotacion ante 429/timeout).
+# Overpass: primary endpoint + fallback (rotation on 429/timeout).
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 ]
-# Nominatim: para resolver el relation id de cada ciudad en runtime.
+# Nominatim: to resolve each city's relation id at runtime.
 NOMINATIM_ENDPOINT = "https://nominatim.openstreetmap.org/search"
 
-# Identificacion honesta del cliente (politica de uso de las APIs publicas de OSM).
+# Honest client identification (usage policy of OSM's public APIs).
 USER_AGENT = "site-selection-engine/0.1 (portfolio project; contact: saulo.q1112@gmail.com)"
 
-# --- Cortesia de red ---
-REQUEST_TIMEOUT = 180          # segundos por consulta Overpass
-SLEEP_BETWEEN_QUERIES = 3      # segundos entre consultas (evitar rate-limit)
+# --- Network courtesy ---
+REQUEST_TIMEOUT = 180          # seconds per Overpass query
+SLEEP_BETWEEN_QUERIES = 3      # seconds between queries (avoid rate-limit)
 SLEEP_BETWEEN_CITIES = 5
 MAX_RETRIES = 3
-BACKOFF_BASE = 5               # backoff exponencial: BACKOFF_BASE * 2**intento
+BACKOFF_BASE = 5               # exponential backoff: BACKOFF_BASE * 2**attempt
 
-# --- Ciudades candidatas ---
-# osm_relation_id: respaldo hardcoded por si Nominatim falla o devuelve otra entidad.
-#   Se verifica/loguea el id realmente usado en cada corrida (transparencia).
-#   Estos ids corresponden a la relacion del municipio/distrito en OSM y pueden
-#   confirmarse en https://www.openstreetmap.org/relation/<id>.
+# --- Candidate cities ---
+# osm_relation_id: hardcoded fallback in case Nominatim fails or returns a different entity.
+#   The id actually used is verified/logged on each run (transparency).
+#   These ids correspond to the municipality/district relation in OSM and can
+#   be confirmed at https://www.openstreetmap.org/relation/<id>.
 CITIES: dict[str, dict] = {
     "Bogota": {
         "nominatim_query": "Bogota, Colombia",
@@ -66,29 +66,29 @@ CITIES: dict[str, dict] = {
     },
 }
 
-# --- Umbral honesto de positivos viables ---
-# El clasificador look-alike (v2/v3) usa los hexagonos con D1 como positivos.
-# La separacion espacial (spatial CV en v3) descarta positivos dentro de buffers,
-# reduciendo la muestra efectiva. Fijamos un minimo orientativo de tiendas D1 para
-# que queden positivos suficientes tras esa separacion.
+# --- Honest threshold for viable positives ---
+# The look-alike classifier (v2/v3) uses hexagons with D1 as positives.
+# Spatial separation (spatial CV in v3) discards positives within buffers,
+# reducing the effective sample. We set a rough minimum of D1 stores so
+# enough positives remain after that separation.
 MIN_D1_VIABLE = 40
 
-# --- Plantillas de consultas Overpass (cuerpo, sin cabecera [out:json]) ---
+# --- Overpass query templates (body only, no [out:json] header) ---
 # {area_id} = 3600000000 + relation_id
 OVERPASS_QUERIES = {
-    # Tiendas D1: supermercados con brand D1 (robusto a variantes de tag).
+    # D1 stores: supermarkets with brand D1 (robust to tag variants).
     "d1": (
         'nwr["shop"="supermarket"]["brand"~"^(D1|Tiendas D1)$",i](area:{area_id});'
     ),
-    # Verificacion cruzada por nombre (captura D1 mal etiquetadas sin brand).
+    # Cross-check by name (catches mislabeled D1 stores without a brand tag).
     "d1_by_name": (
         'nwr["shop"="supermarket"]["name"~"D1",i](area:{area_id});'
     ),
-    # Tiendas Ara (respaldo si D1 es escaso).
+    # Ara stores (fallback if D1 is scarce).
     "ara": (
         'nwr["shop"="supermarket"]["brand"~"^Ara$",i](area:{area_id});'
     ),
-    # Densidad general de etiquetado OSM: todos los POIs shop=*.
+    # General OSM tagging density: all shop=* POIs.
     "shops_total": (
         'nwr["shop"](area:{area_id});'
     ),
@@ -96,16 +96,16 @@ OVERPASS_QUERIES = {
 
 
 # =========================================================================== #
-#  PIPELINE DE DATOS — Ciudad de estudio: BOGOTA
-#  (decision documentada en docs/seleccion_area_estudio.md)
+#  DATA PIPELINE — Study city: BOGOTA
+#  (decision documented in docs/seleccion_area_estudio.md)
 # =========================================================================== #
 
-# --- Area de estudio ---
+# --- Study area ---
 STUDY_CITY = "Bogota"
 STUDY_RELATION_ID = 7426387                       # Bogota, Distrito Capital
-STUDY_AREA_ID = 3_600_000_000 + STUDY_RELATION_ID  # id de area para Overpass
+STUDY_AREA_ID = 3_600_000_000 + STUDY_RELATION_ID  # area id for Overpass
 
-# --- Rutas de salida del pipeline ---
+# --- Pipeline output paths ---
 BOUNDARY_PATH = DATA_RAW / "bogota_boundary.geojson"
 POIS_D1_PATH = DATA_RAW / "pois_d1.geojson"
 POIS_COMPETIDORES_PATH = DATA_RAW / "pois_competidores.geojson"
@@ -118,40 +118,40 @@ FEATURES_PARQUET_PATH = DATA_PROCESSED / "features.parquet"
 FEATURES_CSV_PATH = DATA_PROCESSED / "features.csv"
 FEATURES_SUMMARY_PATH = DOCS / "features_summary.md"
 
-# Censo DANE (carga opcional, no bloquea el pipeline). Si existe un archivo local
-# (geopackage/shapefile de manzanas del MGN-CNPV 2018 para Bogota), db.py lo carga.
+# DANE census (optional load, does not block the pipeline). If a local file exists
+# (geopackage/shapefile of blocks from MGN-CNPV 2018 for Bogota), db.py loads it.
 CENSO_PATH_CANDIDATES = [
     DATA_RAW / "manzanas_censo.gpkg",
     DATA_RAW / "manzanas_censo.geojson",
     DATA_RAW / "MGN_ANM_MANZANA.shp",
 ]
 
-# Estrato socioeconomico IDECA (Bogota). El estrato NO viene en el censo DANE: es
-# una capa aparte ("Manzana Estratificacion" de IDECA / Datos Abiertos Bogota) con el
-# estrato (1-6) por manzana. Carga opcional, no bloquea el pipeline (ver
-# src/data/load_estrato.py). Relevante para el look-alike: D1 es hard-discount con
-# foco en estratos 1-3.
+# IDECA socioeconomic stratum (Bogota). The stratum is NOT in the DANE census: it is
+# a separate layer ("Manzana Estratificacion" from IDECA / Bogota Open Data) with the
+# stratum (1-6) per block. Optional load, does not block the pipeline (see
+# src/data/load_estrato.py). Relevant for the look-alike: D1 is a hard-discount chain
+# focused on strata 1-3.
 ESTRATO_PATH_CANDIDATES = [
     DATA_RAW / "estrato_bogota.gpkg",
     DATA_RAW / "estrato_bogota.geojson",
     DATA_RAW / "ManzanaEstratificacion.shp",
 ]
 
-# --- Grid H3 ---
-H3_RESOLUTION = 9          # ~0.105 km2 por hexagono (escala de barrio)
+# --- H3 grid ---
+H3_RESOLUTION = 9          # ~0.105 km2 per hexagon (neighborhood scale)
 
-# --- Red vial (osmnx) ---
+# --- Street network (osmnx) ---
 STREET_NETWORK_TYPE = "drive"
 
-# --- Base de datos PostGIS ---
-# Default en puerto 5433: el 5432 lo ocupa el contenedor del proyecto EUDR.
-# Override con la variable de entorno DATABASE_URL (ver docker-compose.yml).
+# --- PostGIS database ---
+# Defaults to port 5433: 5432 is used by the EUDR project's container.
+# Override with the DATABASE_URL environment variable (see docker-compose.yml).
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql://postgres:postgres@localhost:5433/site_selection",
 )
 
-# Nombres de tablas en PostGIS.
+# Table names in PostGIS.
 TABLES = {
     "pois_d1": "pois_d1",
     "pois_competidores": "pois_competidores",
@@ -162,29 +162,29 @@ TABLES = {
     "manzanas_estrato": "manzanas_estrato",
 }
 
-# --- Buffers de features (metros) ---
+# --- Feature buffers (meters) ---
 BUFFER_300 = 300
 BUFFER_500 = 500
 BUFFER_1000 = 1000
 
-# --- Marcas de competidores (supermercados) para pois_competidores ---
-# Se incluye D1 para tener el mapa completo de supermercados.
+# --- Competitor (supermarket) brands for pois_competidores ---
+# D1 is included to have the complete supermarket map.
 COMPETIDOR_BRANDS = [
     "D1", "Ara", "Justo & Bueno", "Exito", "Carulla",
     "Surtimax", "Olimpica",
 ]
 
-# --- Consultas Overpass del pipeline (cuerpo, sin cabecera) ---
-# Todas restringidas al area administrativa de Bogota (area:STUDY_AREA_ID).
+# --- Pipeline Overpass queries (body only, no header) ---
+# All restricted to Bogota's administrative area (area:STUDY_AREA_ID).
 
-# D1: brand D1 / Tiendas D1, mas verificacion por nombre.
+# D1: brand D1 / Tiendas D1, plus a name-based check.
 PIPELINE_QUERY_D1 = (
     'nwr["shop"="supermarket"]["brand"~"^(D1|Tiendas D1)$",i](area:{area_id});'
     'nwr["shop"="supermarket"]["name"~"D1",i](area:{area_id});'
 )
 
-# Competidores: supermercados de las marcas listadas (incluye D1).
-# Regex robusto a acentos (Exito/Éxito, Olimpica/Olímpica).
+# Competitors: supermarkets from the listed brands (includes D1).
+# Regex robust to accents (Exito/Éxito, Olimpica/Olímpica).
 PIPELINE_QUERY_COMPETIDORES = (
     'nwr["shop"="supermarket"]'
     '["brand"~"D1|Ara|Justo & Bueno|Justo y Bueno|Éxito|Exito|Carulla|Surtimax|Olímpica|Olimpica",i]'
@@ -194,7 +194,7 @@ PIPELINE_QUERY_COMPETIDORES = (
     '(area:{area_id});'
 )
 
-# Complementarios: cada bloque agrupado por categoria (ver COMPLEMENTARIO_RULES).
+# Complementary POIs: each block grouped by category (see COMPLEMENTARIO_RULES).
 PIPELINE_QUERY_COMPLEMENTARIOS = (
     'nwr["amenity"="pharmacy"](area:{area_id});'
     'nwr["shop"="pharmacy"](area:{area_id});'
@@ -207,8 +207,8 @@ PIPELINE_QUERY_COMPLEMENTARIOS = (
     'nwr["amenity"="atm"](area:{area_id});'
 )
 
-# Reglas para asignar `categoria` a cada POI complementario (orden importa).
-# Cada regla: (categoria, clave_tag, valores_aceptados).
+# Rules to assign `categoria` to each complementary POI (order matters).
+# Each rule: (category, tag_key, accepted_values).
 COMPLEMENTARIO_RULES = [
     ("farmacia", "amenity", {"pharmacy"}),
     ("farmacia", "shop", {"pharmacy"}),
@@ -220,37 +220,37 @@ COMPLEMENTARIO_RULES = [
 
 
 # =========================================================================== #
-#  MODELO v1 — MCDA baseline (scoring ponderado, sin ML)
-#  (metodologia en docs/metodologia.md §4; resultados en docs/v1_mcda_resultados.md)
+#  MODEL v1 — MCDA baseline (weighted scoring, no ML)
+#  (methodology in docs/metodologia.md §4; results in docs/v1_mcda_resultados.md)
 # =========================================================================== #
 
-# --- Rutas de salida de v1 ---
+# --- v1 output paths ---
 MCDA_RANKING_PARQUET_PATH = DATA_PROCESSED / "mcda_ranking.parquet"
 MCDA_RANKING_CSV_PATH = DATA_PROCESSED / "mcda_ranking.csv"
 MCDA_SUMMARY_PATH = DOCS / "v1_mcda_resultados.md"
 
-# --- Evaluacion honesta (post-hoc) ---
-# K para las metricas de ranking (NDCG@K, top-K hitting, top-K loss). K=200 ~ 5.5% del
-# grid (3589 hexagonos): tamano de shortlist realista para "elegir K celdas a explorar".
-# Nota: el ratio real de positivos es ~24.5% (879/3589), bastante mayor que K -> por
-# eso el top-K hitting tiene un techo < 1 (ver "hitting_ceiling" en write_summary de v1).
+# --- Honest evaluation (post-hoc) ---
+# K for the ranking metrics (NDCG@K, top-K hitting, top-K loss). K=200 ~ 5.5% of the
+# grid (3589 hexagons): a realistic shortlist size for "picking K cells to explore".
+# Note: the real positive ratio is ~24.5% (879/3589), well above K -> that's why
+# top-K hitting has a ceiling < 1 (see "hitting_ceiling" in v1's write_summary).
 TOP_K = 200
 
-# --- Features derivadas de D1 (LEAKAGE) — EXCLUIDAS del score MCDA ---
-# La etiqueta `tiene_d1 = (n_d1_300m >= 1)` es funcion directa de estas columnas.
-# Usarlas como insumo del score seria leakage tautologico (igual que en v2/v3).
-# Se mantiene sincronizada con D1_DERIVED_COLS en src/features.py.
+# --- Features derived from D1 (LEAKAGE) — EXCLUDED from the MCDA score ---
+# The label `tiene_d1 = (n_d1_300m >= 1)` is a direct function of these columns.
+# Using them as score input would be tautological leakage (same as in v2/v3).
+# Kept in sync with D1_DERIVED_COLS in src/features.py.
 MCDA_LEAKAGE_COLS = ["n_d1_300m", "n_d1_500m", "dist_d1_km"]
 
-# --- Pesos a priori del MCDA, por grupo de variables ---
-# Definidos por razonamiento de negocio (NO ajustados a la etiqueta — eso seria ML).
-#   - competencia (no-D1): zona retail activa = buena senal de viabilidad comercial.
-#   - complementarios: proxy de flujo peatonal / actividad urbana.
-#   - accesibilidad_vial: facilidad de llegada / visibilidad.
-#   - demografia: tamano de mercado local (nula si el censo no esta cargado;
-#     en ese caso su peso se reparte proporcionalmente entre los grupos presentes).
-# Cada feature lleva una direccion: +1 (mas es mejor) o -1 (se invierte tras normalizar,
-# p.ej. distancias: mas cerca es mejor).
+# --- MCDA a priori weights, by variable group ---
+# Defined by business reasoning (NOT fit to the label — that would be ML).
+#   - competencia (non-D1): active retail zone = good signal of commercial viability.
+#   - complementarios: proxy for foot traffic / urban activity.
+#   - accesibilidad_vial: ease of access / visibility.
+#   - demografia: local market size (null if the census is not loaded;
+#     in that case its weight is spread proportionally across the present groups).
+# Each feature carries a direction: +1 (more is better) or -1 (inverted after
+# normalizing, e.g. distances: closer is better).
 MCDA_GROUP_WEIGHTS = {
     "competencia": 0.35,
     "complementarios": 0.35,
@@ -258,12 +258,13 @@ MCDA_GROUP_WEIGHTS = {
     "demografia": 0.15,
 }
 
-# Features que componen cada grupo, con su direccion (+1 mejor-mas, -1 mejor-menos).
-# Dentro de cada grupo el peso del grupo se reparte uniforme entre sus features.
+# Features that make up each group, with their direction (+1 more-is-better,
+# -1 less-is-better). Within each group, the group's weight is split evenly
+# across its features.
 MCDA_GROUP_FEATURES = {
     "competencia": [
-        ("n_supermercados_500m", +1),   # mas supermercados (no-D1) = zona retail activa
-        ("dist_supermercado_km", -1),   # mas cerca de retail = mejor
+        ("n_supermercados_500m", +1),   # more supermarkets (non-D1) = active retail zone
+        ("dist_supermercado_km", -1),   # closer to retail = better
     ],
     "complementarios": [
         ("n_farmacias_500m", +1),
@@ -275,30 +276,30 @@ MCDA_GROUP_FEATURES = {
         ("densidad_vial", +1),
     ],
     "demografia": [
-        ("poblacion_estimada", +1),     # mas mercado local potencial
+        ("poblacion_estimada", +1),     # more potential local market
         ("viviendas_estimadas", +1),
-        ("estrato_promedio", -1),       # D1 (hard-discount) apunta a estratos bajos
+        ("estrato_promedio", -1),       # D1 (hard-discount) targets lower strata
     ],
 }
 
 
 # =========================================================================== #
-#  MODELOS v2 / v3 — clasificador look-alike (ML)
-#  (metodologia en docs/metodologia.md §4; resultados en docs/v2_lookalike_resultados.md)
+#  MODELS v2 / v3 — look-alike classifier (ML)
+#  (methodology in docs/metodologia.md §4; results in docs/v2_lookalike_resultados.md)
 # =========================================================================== #
 
-# --- Definicion del problema de clasificacion ---
-# Etiqueta binaria ya calculada en features.parquet (ETAPA 4):
-#   tiene_d1 = 1  -> el hexagono YA tiene >=1 tienda D1 a <=300m ("celda tipo-D1").
-#   tiene_d1 = 0  -> el hexagono no tiene D1 cercano.
-# El clasificador estima P(tiene_d1=1) a partir de features NO-D1; esa probabilidad
-# es el score look-alike con el que se rankea. (Ver docs/metodologia.md §2 y §5.)
+# --- Classification problem definition ---
+# Binary label already computed in features.parquet (STAGE 4):
+#   tiene_d1 = 1  -> the hexagon ALREADY has >=1 D1 store within <=300m ("D1-type cell").
+#   tiene_d1 = 0  -> the hexagon has no nearby D1.
+# The classifier estimates P(tiene_d1=1) from non-D1 features; that probability
+# is the look-alike score used for ranking. (See docs/metodologia.md §2 and §5.)
 LABEL_COL = "tiene_d1"
 
-# --- Features predictoras (anti-leakage) ---
-# Todas las numericas de features.parquet EXCEPTO: columnas de leakage de D1
-# (MCDA_LEAKAGE_COLS), identificadores/geo (h3_index, centroides) y la propia etiqueta.
-# El filtro de columnas 100% nulas (p.ej. demografia sin censo) se hace en runtime.
+# --- Predictor features (anti-leakage) ---
+# All numeric columns from features.parquet EXCEPT: D1 leakage columns
+# (MCDA_LEAKAGE_COLS), identifiers/geo (h3_index, centroids), and the label itself.
+# The filter for 100%-null columns (e.g. demographics without census) runs at runtime.
 NON_PREDICTOR_COLS = ["h3_index", "lat_centroid", "lon_centroid", LABEL_COL]
 MODEL_PREDICTOR_COLS = [
     "n_supermercados_500m",
@@ -311,39 +312,41 @@ MODEL_PREDICTOR_COLS = [
     "poblacion_estimada",
     "viviendas_estimadas",
     "estrato_promedio",
-]  # NOTA: excluye explicitamente MCDA_LEAKAGE_COLS (n_d1_300m/500m/dist_d1_km).
+]  # NOTE: explicitly excludes MCDA_LEAKAGE_COLS (n_d1_300m/500m/dist_d1_km).
 
-# Subconjunto demografico (censo DANE + estrato IDECA). v4 lo usa para aislar el
-# aporte de la demografia: compara el modelo SIN estas columnas (= predictores de v3)
-# contra el modelo CON ellas. Quedan vacias (NaN) si las capas no estan cargadas.
+# Demographic subset (DANE census + IDECA stratum). v4 uses it to isolate the
+# contribution of demographics: compares the model WITHOUT these columns (= v3's
+# predictors) against the model WITH them. They stay empty (NaN) if the layers
+# are not loaded.
 DEMOGRAPHIC_COLS = [
     "poblacion_estimada",
     "viviendas_estimadas",
     "estrato_promedio",
 ]
 
-# --- Particion train/test de v2 (split ALEATORIO estratificado, naive a proposito) ---
-# El split aleatorio mezcla hexagonos vecinos entre train y test -> leakage por
-# autocorrelacion espacial. Es intencional: v3 lo corrige con spatial CV y se compara.
+# --- v2 train/test split (stratified RANDOM split, naive on purpose) ---
+# The random split mixes neighboring hexagons between train and test -> leakage from
+# spatial autocorrelation. This is intentional: v3 fixes it with spatial CV and is
+# compared against it.
 TEST_SIZE = 0.25
 RANDOM_STATE = 42
 
-# --- Rutas de salida de v2 ---
+# --- v2 output paths ---
 LOOKALIKE_V2_RANKING_PARQUET_PATH = DATA_PROCESSED / "lookalike_v2_ranking.parquet"
 LOOKALIKE_V2_RANKING_CSV_PATH = DATA_PROCESSED / "lookalike_v2_ranking.csv"
 LOOKALIKE_V2_MODEL_PATH = DATA_PROCESSED / "lookalike_v2.joblib"
 LOOKALIKE_V2_SUMMARY_PATH = DOCS / "v2_lookalike_resultados.md"
 
-# --- v3: Spatial Cross-Validation (corrige el leakage espacial de v2) ---
-# Cada hexagono res-9 se agrupa por su padre H3 a resolucion gruesa -> bloques
-# geograficos enteros van juntos a train o test (StratifiedGroupKFold). Ademas se
-# excluyen del train los hexagonos a <=SPATIAL_CV_BUFFER_RINGS anillos de cualquier
-# celda de test (buffer espacial). Asi train y test no comparten vecindario.
-SPATIAL_CV_BLOCK_RES = 6        # res padre -> ~24 bloques de ~36 km2 sobre Bogota
+# --- v3: Spatial Cross-Validation (fixes v2's spatial leakage) ---
+# Each res-9 hexagon is grouped by its H3 parent at a coarser resolution -> whole
+# geographic blocks go together into train or test (StratifiedGroupKFold). In
+# addition, hexagons within <=SPATIAL_CV_BUFFER_RINGS rings of any test cell are
+# excluded from train (spatial buffer). This way train and test share no neighborhood.
+SPATIAL_CV_BLOCK_RES = 6        # parent res -> ~24 blocks of ~36 km2 over Bogota
 SPATIAL_CV_FOLDS = 5
-SPATIAL_CV_BUFFER_RINGS = 1     # anillos H3 (grid_disk) excluidos del train
+SPATIAL_CV_BUFFER_RINGS = 1     # H3 rings (grid_disk) excluded from train
 
-# --- Rutas de salida de v3 ---
+# --- v3 output paths ---
 LOOKALIKE_V3_RANKING_PARQUET_PATH = DATA_PROCESSED / "lookalike_v3_ranking.parquet"
 LOOKALIKE_V3_RANKING_CSV_PATH = DATA_PROCESSED / "lookalike_v3_ranking.csv"
 LOOKALIKE_V3_MODEL_PATH = DATA_PROCESSED / "lookalike_v3.joblib"
@@ -351,10 +354,10 @@ LOOKALIKE_V3_SUMMARY_PATH = DOCS / "v3_spatial_cv_resultados.md"
 
 
 # =========================================================================== #
-#  MODELO v4 — look-alike con DEMOGRAFIA (censo DANE + estrato IDECA)
-#  Mismo esquema honesto de v3 (spatial CV). Aisla el aporte de la demografia:
-#  compara predictores SIN demografia (= v3) vs CON demografia.
-#  (resultados en docs/v4_demografia_resultados.md)
+#  MODEL v4 — look-alike with DEMOGRAPHICS (DANE census + IDECA stratum)
+#  Same honest scheme as v3 (spatial CV). Isolates the demographic contribution:
+#  compares predictors WITHOUT demographics (= v3) vs WITH demographics.
+#  (results in docs/v4_demografia_resultados.md)
 # =========================================================================== #
 LOOKALIKE_V4_RANKING_PARQUET_PATH = DATA_PROCESSED / "lookalike_v4_ranking.parquet"
 LOOKALIKE_V4_RANKING_CSV_PATH = DATA_PROCESSED / "lookalike_v4_ranking.csv"
@@ -363,49 +366,49 @@ LOOKALIKE_V4_SUMMARY_PATH = DOCS / "v4_demografia_resultados.md"
 
 
 # =========================================================================== #
-#  SERVING — API de inferencia (FastAPI) + frontend (Streamlit)
-#  El serving en RUNTIME se desacopla de PostGIS: lee artefactos versionados
-#  (rankings parquet, modelo .joblib, GeoJSON de POIs). PostGIS solo se usa en
-#  el ETL local (ver docker-compose.yml). Ver docs/despliegue.md.
+#  SERVING — Inference API (FastAPI) + frontend (Streamlit)
+#  Serving at RUNTIME is decoupled from PostGIS: it reads versioned artifacts
+#  (parquet rankings, .joblib model, POI GeoJSON). PostGIS is only used in the
+#  local ETL (see docker-compose.yml). See docs/despliegue.md.
 # =========================================================================== #
 
-# Modelo servido por defecto (clave de SERVING_RANKINGS / SERVING_MODELS).
-# Override con la variable de entorno SERVING_MODEL.
+# Default model served (key into SERVING_RANKINGS / SERVING_MODELS).
+# Override with the SERVING_MODEL environment variable.
 SERVING_MODEL = os.environ.get("SERVING_MODEL", "v3")
 
-# Rankings disponibles para servir (precomputados por cada modelo).
+# Rankings available to serve (precomputed for each model).
 SERVING_RANKINGS = {
     "mcda": MCDA_RANKING_PARQUET_PATH,
     "v2": LOOKALIKE_V2_RANKING_PARQUET_PATH,
     "v3": LOOKALIKE_V3_RANKING_PARQUET_PATH,
     "v4": LOOKALIKE_V4_RANKING_PARQUET_PATH,
 }
-# Columna de score por modelo (el nombre varia entre rankings).
+# Score column per model (the name varies between rankings).
 SERVING_SCORE_COL = {
     "mcda": "score_mcda",
     "v2": "score_lookalike",
     "v3": "score_lookalike_v3",
     "v4": "score_lookalike_v4",
 }
-# Modelos .joblib para inferencia en vivo (POST /score).
+# .joblib models for live inference (POST /score).
 SERVING_MODELS = {
     "v2": LOOKALIKE_V2_MODEL_PATH,
     "v3": LOOKALIKE_V3_MODEL_PATH,
     "v4": LOOKALIKE_V4_MODEL_PATH,
 }
-# Capas POI (GeoJSON crudos) que el frontend puede superponer.
+# POI layers (raw GeoJSON) that the frontend can overlay.
 SERVING_POI_LAYERS = {
     "d1": POIS_D1_PATH,
     "competidores": POIS_COMPETIDORES_PATH,
     "complementarios": POIS_COMPLEMENTARIOS_PATH,
 }
 
-# CORS para el frontend (Streamlit Cloud u otro origen). "*" por defecto para la
-# demo publica; restringir en produccion via env SERVING_CORS_ORIGINS (coma-separado).
+# CORS for the frontend (Streamlit Cloud or another origin). "*" by default for the
+# public demo; restrict in production via the env var SERVING_CORS_ORIGINS (comma-separated).
 SERVING_CORS_ORIGINS = [
     o.strip() for o in os.environ.get("SERVING_CORS_ORIGINS", "*").split(",") if o.strip()
 ]
 
-# Base URL de la API que consume el frontend Streamlit. Vacio -> Streamlit cae a
-# leer el parquet local directamente (fallback robusto para la demo).
+# Base URL of the API consumed by the Streamlit frontend. Empty -> Streamlit falls
+# back to reading the local parquet directly (robust fallback for the demo).
 API_BASE_URL = os.environ.get("API_BASE_URL", "")

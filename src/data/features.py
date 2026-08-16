@@ -1,10 +1,10 @@
-"""ETAPA 4 — Tabla de features por hexagono (queries SQL espaciales en PostGIS).
+"""STAGE 4 — Feature table per hexagon (spatial SQL queries in PostGIS).
 
-Por cada hexagono del grid calcula features de competencia, complementarios, red vial
-y (si el censo esta cargado) demograficas, mas la etiqueta look-alike `tiene_d1`.
-Guarda features.parquet (+ .csv) y un resumen en docs/features_summary.md.
+For each hexagon in the grid, computes competition, complementary, road network
+and (if the census is loaded) demographic features, plus the look-alike label
+`tiene_d1`. Saves features.parquet (+ .csv) and a summary in docs/features_summary.md.
 
-Ejecutar de forma independiente (requiere ETAPA 3 cargada):
+Run standalone (requires STAGE 3 loaded):
     uv run python -m src.data.features
 """
 
@@ -20,18 +20,18 @@ from src.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# Columnas candidatas de poblacion/vivienda en el MGN-CNPV 2018 (varian por version).
+# Candidate population/housing columns in the MGN-CNPV 2018 (vary by version).
 CENSO_POP_CANDIDATES = ["stp27_pers", "tp27_perso", "personas", "poblacion", "tp34_1_se"]
-# manz_viv = viviendas por manzana en el MGN-CNPV 2018 (capa de manzanas SHP/GPKG de DANE).
-# El MGN base no incluye conteo de personas a nivel manzana; poblacion_estimada quedara NULL.
+# manz_viv = dwellings per block in the MGN-CNPV 2018 (DANE block SHP/GPKG layer).
+# The base MGN does not include a person count at the block level; poblacion_estimada will be NULL.
 CENSO_VIV_CANDIDATES = ["manz_viv", "tp19_ee_e1", "viviendas", "tp16_hog", "tp9_1_uso", "stp19_vivi"]
-# ESTRATO (mayusculas): nombre real en PostgreSQL cuando la capa IDECA se carga con
-# geopandas/to_postgis preservando mayusculas — columna creada como "ESTRATO" (quoted).
+# ESTRATO (uppercase): actual name in PostgreSQL when the IDECA layer is loaded with
+# geopandas/to_postgis preserving uppercase — column created as "ESTRATO" (quoted).
 ESTRATO_COL_CANDIDATES = [
     "ESTRATO", "estrato", "estrato_ur", "cod_estrat", "codigo_estrato", "estrato_no",
 ]
 
-# Lista canonica de features numericas para el resumen.
+# Canonical list of numeric features for the summary.
 FEATURE_COLS = [
     "n_d1_300m", "n_d1_500m", "dist_d1_km", "n_supermercados_500m",
     "dist_supermercado_km", "n_farmacias_500m", "n_colegios_500m",
@@ -39,17 +39,17 @@ FEATURE_COLS = [
     "poblacion_estimada", "viviendas_estimadas", "estrato_promedio",
 ]
 
-# Features derivadas directamente de la ubicacion de D1: la etiqueta
-# `tiene_d1 = (n_d1_300m >= 1)` es funcion de estas, por lo que NO deben usarse
-# como predictores en v2/v3 (target leakage). Se documenta en el resumen.
+# Features derived directly from D1's location: the label
+# `tiene_d1 = (n_d1_300m >= 1)` is a function of these, so they must NOT be used
+# as predictors in v2/v3 (target leakage). Documented in the summary.
 D1_DERIVED_COLS = ["n_d1_300m", "n_d1_500m", "dist_d1_km"]
 
-# Columnas demograficas (nulas si el censo / estrato no estan cargados).
+# Demographic columns (null if the census / estrato layers are not loaded).
 CENSO_FEATURE_COLS = ["poblacion_estimada", "viviendas_estimadas", "estrato_promedio"]
 
 
 # --------------------------------------------------------------------------- #
-# Deteccion de capas opcionales
+# Detection of optional layers
 # --------------------------------------------------------------------------- #
 def _table_exists(engine: Engine, table: str) -> bool:
     with engine.connect() as conn:
@@ -57,10 +57,10 @@ def _table_exists(engine: Engine, table: str) -> bool:
 
 
 def _detect_column(engine: Engine, table: str, candidates: list[str]) -> str | None:
-    """Retorna el nombre REAL de la columna en la BD (con su casing exacto).
+    """Returns the ACTUAL column name in the DB (with its exact casing).
 
-    Compara contra los candidatos en minusculas, pero devuelve el nombre original
-    de la BD para que el SQL lo pueda citar correctamente con comillas dobles.
+    Compares against the candidates in lowercase, but returns the original
+    DB name so the SQL can quote it correctly with double quotes.
     """
     with engine.connect() as conn:
         actual = {r[0].lower(): r[0] for r in conn.execute(text(
@@ -70,14 +70,14 @@ def _detect_column(engine: Engine, table: str, candidates: list[str]) -> str | N
 
 
 # --------------------------------------------------------------------------- #
-# Construccion del SQL
+# SQL construction
 # --------------------------------------------------------------------------- #
 def build_features_sql(engine: Engine) -> str:
     has_streets = _table_exists(engine, config.TABLES["streets"])
     has_censo = _table_exists(engine, config.TABLES["manzanas_censo"])
     has_estrato = _table_exists(engine, config.TABLES["manzanas_estrato"])
 
-    # --- Red vial ---
+    # --- Road network ---
     if has_streets:
         densidad_vial = """
         COALESCE((
@@ -86,35 +86,35 @@ def build_features_sql(engine: Engine) -> str:
             WHERE ST_Intersects(s.geom, g.geom)
         ), 0) / NULLIF(ST_Area(g.geom::geography), 0) AS densidad_vial"""
     else:
-        logger.warning("Tabla 'streets' ausente -> densidad_vial = NULL")
+        logger.warning("Table 'streets' missing -> densidad_vial = NULL")
         densidad_vial = "NULL::double precision AS densidad_vial"
 
-    # --- Demografia: poblacion / viviendas (prorrateo por area, magnitud EXTENSIVA) ---
+    # --- Demographics: population / dwellings (area-prorated, EXTENSIVE magnitude) ---
     censo_table = config.TABLES["manzanas_censo"]
     if has_censo:
         pop_col = _detect_column(engine, censo_table, CENSO_POP_CANDIDATES)
         viv_col = _detect_column(engine, censo_table, CENSO_VIV_CANDIDATES)
-        logger.info("Censo disponible. Columnas detectadas: poblacion=%s, viviendas=%s",
+        logger.info("Census available. Detected columns: poblacion=%s, viviendas=%s",
                     pop_col, viv_col)
         poblacion = _prorate_sum_expr(censo_table, pop_col, "poblacion_estimada")
         viviendas = _prorate_sum_expr(censo_table, viv_col, "viviendas_estimadas")
     else:
-        logger.warning("Tabla 'manzanas_censo' ausente -> poblacion/viviendas = NULL "
-                       "(ver src/data/load_censo.py)")
+        logger.warning("Table 'manzanas_censo' missing -> poblacion/viviendas = NULL "
+                       "(see src/data/load_censo.py)")
         poblacion = "NULL::double precision AS poblacion_estimada"
         viviendas = "NULL::double precision AS viviendas_estimadas"
 
-    # --- Demografia: estrato (promedio ponderado por area, magnitud INTENSIVA) ---
-    # El estrato es ordinal (1-6): no se suma sino que se promedia ponderando por el
-    # area de interseccion. Los valores <=0 (no residencial / sin estrato) se ignoran.
+    # --- Demographics: estrato (area-weighted average, INTENSIVE magnitude) ---
+    # Estrato is ordinal (1-6): it is not summed but averaged, weighted by the
+    # intersection area. Values <=0 (non-residential / no estrato) are ignored.
     estrato_table = config.TABLES["manzanas_estrato"]
     if has_estrato:
         estrato_col = _detect_column(engine, estrato_table, ESTRATO_COL_CANDIDATES)
-        logger.info("Estrato disponible. Columna detectada: estrato=%s", estrato_col)
+        logger.info("Estrato available. Detected column: estrato=%s", estrato_col)
         estrato = _prorate_avg_expr(estrato_table, estrato_col, "estrato_promedio")
     else:
-        logger.warning("Tabla 'manzanas_estrato' ausente -> estrato_promedio = NULL "
-                       "(ver src/data/load_estrato.py)")
+        logger.warning("Table 'manzanas_estrato' missing -> estrato_promedio = NULL "
+                       "(see src/data/load_estrato.py)")
         estrato = "NULL::double precision AS estrato_promedio"
 
     return f"""
@@ -123,7 +123,7 @@ def build_features_sql(engine: Engine) -> str:
         g.lat_centroid,
         g.lon_centroid,
 
-        -- Competencia
+        -- Competition
         (SELECT count(*) FROM pois_d1 d
             WHERE ST_DWithin(g.geom::geography, d.geom::geography, {config.BUFFER_300}))
             AS n_d1_300m,
@@ -132,9 +132,9 @@ def build_features_sql(engine: Engine) -> str:
             AS n_d1_500m,
         (SELECT ST_Distance(g.geom::geography, d.geom::geography) / 1000.0
             FROM pois_d1 d ORDER BY g.geom <-> d.geom LIMIT 1) AS dist_d1_km,
-        -- Competencia NO-D1: se excluye D1 (COALESCE(es_d1,0)=0) porque D1 es el
-        -- objetivo look-alike, no un competidor a medir. Incluirlo filtraria la
-        -- etiqueta (todo positivo tendria un "supermercado" = el propio D1 a <=300m).
+        -- NON-D1 competition: D1 is excluded (COALESCE(es_d1,0)=0) because D1 is the
+        -- look-alike target, not a competitor to measure. Including it would leak the
+        -- label (every positive would have a "supermarket" = D1 itself at <=300m).
         (SELECT count(*) FROM pois_competidores c
             WHERE COALESCE(c.es_d1, 0) = 0
               AND ST_DWithin(g.geom::geography, c.geom::geography, {config.BUFFER_500}))
@@ -145,7 +145,7 @@ def build_features_sql(engine: Engine) -> str:
             ORDER BY g.geom <-> c.geom LIMIT 1)
             AS dist_supermercado_km,
 
-        -- Complementarios (buffer 500m)
+        -- Complementary POIs (500m buffer)
         (SELECT count(*) FROM pois_complementarios p
             WHERE p.categoria = 'farmacia'
               AND ST_DWithin(g.geom::geography, p.geom::geography, {config.BUFFER_500}))
@@ -163,10 +163,10 @@ def build_features_sql(engine: Engine) -> str:
               AND ST_DWithin(g.geom::geography, p.geom::geography, {config.BUFFER_500}))
             AS n_bancos_atm_500m,
 
-        -- Red vial
+        -- Road network
         {densidad_vial},
 
-        -- Demografia
+        -- Demographics
         {poblacion},
         {viviendas},
         {estrato}
@@ -176,10 +176,10 @@ def build_features_sql(engine: Engine) -> str:
 
 
 def _prorate_sum_expr(table: str, col: str | None, alias: str) -> str:
-    """Prorrateo de una magnitud EXTENSIVA (poblacion, viviendas): suma ponderada por
-    la fraccion de cada manzana que cae dentro del hexagono. Sin doble conteo.
-    El nombre de columna se cita con comillas dobles para soportar tanto nombres
-    lowercase (manz_viv) como uppercase preservado por geopandas/to_postgis."""
+    """Proration of an EXTENSIVE magnitude (population, dwellings): sum weighted by
+    the fraction of each block that falls inside the hexagon. No double counting.
+    The column name is quoted with double quotes to support both lowercase names
+    (manz_viv) and uppercase preserved by geopandas/to_postgis."""
     if col is None:
         return f"NULL::double precision AS {alias}"
     return f"""
@@ -193,10 +193,10 @@ def _prorate_sum_expr(table: str, col: str | None, alias: str) -> str:
 
 
 def _prorate_avg_expr(table: str, col: str | None, alias: str) -> str:
-    """Promedio ponderado de una magnitud INTENSIVA (estrato 1-6): media de los valores
-    de manzana ponderada por el area de interseccion con el hexagono. Se descartan
-    valores <=0 (no residencial / sin estrato). Devuelve NULL si no hay manzana valida.
-    El nombre de columna se cita con comillas dobles (soporta uppercase de IDECA)."""
+    """Weighted average of an INTENSIVE magnitude (estrato 1-6): mean of the block
+    values weighted by the intersection area with the hexagon. Values <=0
+    (non-residential / no estrato) are discarded. Returns NULL if no valid block.
+    The column name is quoted with double quotes (supports uppercase from IDECA)."""
     if col is None:
         return f"NULL::double precision AS {alias}"
     return f"""
@@ -212,23 +212,23 @@ def _prorate_avg_expr(table: str, col: str | None, alias: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Resumen
+# Summary
 # --------------------------------------------------------------------------- #
 def _demografia_section(df: pd.DataFrame, n_total: int) -> list[str]:
-    """Seccion de cobertura demografica (censo DANE + estrato IDECA), honesta.
+    """Demographic coverage section (DANE census + IDECA estrato), honestly reported.
 
-    Las manzanas no cubren todo el grid (zonas no residenciales/rurales o sin estrato),
-    asi que reporta explicitamente cuantos hexagonos quedan sin dato y por que.
+    Blocks do not cover the whole grid (non-residential/rural zones or no estrato),
+    so this explicitly reports how many hexagons are left without data and why.
     """
     present = [c for c in CENSO_FEATURE_COLS if c in df.columns and df[c].notna().any()]
     if not present:
         return [
-            "\n## Features demograficas\n",
-            "_No disponibles en esta corrida: no estaban cargadas las tablas "
-            "`manzanas_censo` (poblacion/viviendas) ni `manzanas_estrato` (estrato). "
-            "Ver `src/data/load_censo.py` y `src/data/load_estrato.py` para habilitarlas. "
-            "El modelo v4 las incluye; con NULL parcial se imputa la mediana "
-            "(ver `src/models/lookalike.py::build_model`)._\n",
+            "\n## Demographic features\n",
+            "_Not available in this run: the `manzanas_censo` (population/dwellings) "
+            "and `manzanas_estrato` (estrato) tables were not loaded. "
+            "See `src/data/load_censo.py` and `src/data/load_estrato.py` to enable them. "
+            "The v4 model includes them; partial NULLs are imputed with the median "
+            "(see `src/models/lookalike.py::build_model`)._\n",
         ]
 
     cov_rows = [
@@ -237,23 +237,23 @@ def _demografia_section(df: pd.DataFrame, n_total: int) -> list[str]:
         for c in present
     ]
     out = [
-        "\n## Features demograficas — cobertura\n",
-        "Censo DANE (CNPV/MGN 2018, poblacion/viviendas) + estrato IDECA, prorrateados "
-        "por area de interseccion manzana<->hexagono. Las manzanas no cubren todo el "
-        "grid (zonas no residenciales/rurales; estrato 0 = sin estrato, tratado como "
-        "nulo), por lo que parte de los hexagonos queda **sin dato** (NULL). El modelo "
-        "v4 imputa la **mediana** para esos casos en vez de descartarlos.\n",
-        f"_Total de hexagonos: **{n_total}**._\n",
-        "| Feature | Hex con dato | % con dato | % NULL |",
+        "\n## Demographic features — coverage\n",
+        "DANE census (CNPV/MGN 2018, population/dwellings) + IDECA estrato, prorated "
+        "by block<->hexagon intersection area. Blocks do not cover the whole "
+        "grid (non-residential/rural zones; estrato 0 = no estrato, treated as "
+        "null), so part of the hexagons are left **without data** (NULL). The "
+        "v4 model imputes the **median** for those cases instead of discarding them.\n",
+        f"_Total hexagons: **{n_total}**._\n",
+        "| Feature | Hex with data | % with data | % NULL |",
         "|---|---|---|---|",
         *cov_rows,
     ]
     if "estrato_promedio" in present:
         out.append(
-            "\n> **Hipotesis look-alike (a verificar en v4):** D1 es hard-discount con "
-            "foco en estratos bajos -> se espera que `estrato_promedio` tenga relacion "
-            "**negativa** con `tiene_d1` (a menor estrato, mas probable presencia de D1). "
-            "El coeficiente de la LR en v4 lo confirmara o no, honestamente.\n"
+            "\n> **Look-alike hypothesis (to verify in v4):** D1 is a hard-discount chain "
+            "focused on low estratos -> `estrato_promedio` is expected to have a "
+            "**negative** relationship with `tiene_d1` (the lower the estrato, the more "
+            "likely D1 is present). The LR coefficient in v4 will confirm this or not, honestly.\n"
         )
     return out
 
@@ -269,81 +269,81 @@ def write_summary(df: pd.DataFrame) -> None:
     desc["pct_nulos"] = df[present_feats].isna().mean().mul(100).round(2)
     corr = df[present_feats + ["tiene_d1"]].corr(numeric_only=True)["tiene_d1"].drop("tiene_d1")
 
-    # Correlacion residual entre distancia a competidor (no-D1) y distancia a D1: mide
-    # si la senal de "cerca de un supermercado" es solo co-localizacion con D1 (legitima,
-    # no leakage) o si quedo alguna fuga residual tras el fix de es_d1=0 (ver metodologia §6.1).
+    # Residual correlation between non-D1 competitor distance and D1 distance: measures
+    # whether the "close to a supermarket" signal is just co-location with D1 (legitimate,
+    # not leakage) or whether some residual leak remains after the es_d1=0 fix (see methodology §6.1).
     resid_corr = float("nan")
     if "dist_supermercado_km" in df.columns and "dist_d1_km" in df.columns:
         resid_corr = float(df["dist_supermercado_km"].corr(df["dist_d1_km"]))
 
     lines = [
-        "# Resumen de la tabla de features\n",
-        f"_Generado por `src/data/features.py`. Total de hexagonos: **{n_total}**._\n",
-        "## Balance de la etiqueta `tiene_d1`\n",
-        f"- Positivos (tiene_d1=1): **{n_pos}**",
-        f"- Negativos (tiene_d1=0): **{n_neg}**",
-        f"- Ratio positivos/negativos: **{ratio:.4f}** "
-        f"({100 * n_pos / n_total:.2f}% positivos)\n",
-        "> **Nota de modelado:** dataset desbalanceado. Estrategias a "
-        "considerar en v2/v3: `class_weight='balanced'`, metricas de ranking "
-        "(NDCG, top-K) en vez de accuracy, y umbral calibrado. La separacion espacial "
-        "(spatial CV, v3) reducira aun mas los positivos efectivos.\n",
-        "> **Nota de leakage (critica):** la etiqueta `tiene_d1` se define como "
-        "`n_d1_300m >= 1`. Por lo tanto las features derivadas de la ubicacion de D1 "
-        f"(`{'`, `'.join(D1_DERIVED_COLS)}`) son funciones directas de la etiqueta y "
-        "**NO deben usarse como predictores** en el modelo look-alike (target leakage): "
-        "su alta correlacion con `tiene_d1` es tautologica, no informativa. El modelo "
-        "debe aprender de las features de competidores, complementarios, red vial y "
-        "demografia. Esto es independiente del leakage espacial por autocorrelacion, "
-        "que se aborda con spatial CV en v3.\n",
-        "> **Nota de competencia (no-D1):** `n_supermercados_500m` y "
-        "`dist_supermercado_km` miden solo competidores **distintos de D1** "
-        "(`es_d1 = 0`). Incluir a D1 introduciria leakage: todo positivo tendria un "
-        "'supermercado' (el propio D1) a <=300m. Ver docs/metodologia.md §6.\n",
-        f"> **Correlacion residual `dist_supermercado_km` <-> `dist_d1_km`**: "
-        f"**{resid_corr:.4f}**. Se interpreta como co-localizacion real (zonas con "
-        "comercio denso tienden a tener tanto D1 como otros supermercados cerca), no "
-        "como leakage: ya se excluyo a D1 de `dist_supermercado_km` (nota anterior). "
-        "Ver docs/metodologia.md §6.1.\n",
-        "## Estadisticas descriptivas por feature\n",
+        "# Feature table summary\n",
+        f"_Generated by `src/data/features.py`. Total hexagons: **{n_total}**._\n",
+        "## Balance of the `tiene_d1` label\n",
+        f"- Positives (tiene_d1=1): **{n_pos}**",
+        f"- Negatives (tiene_d1=0): **{n_neg}**",
+        f"- Positive/negative ratio: **{ratio:.4f}** "
+        f"({100 * n_pos / n_total:.2f}% positives)\n",
+        "> **Modeling note:** imbalanced dataset. Strategies to "
+        "consider in v2/v3: `class_weight='balanced'`, ranking metrics "
+        "(NDCG, top-K) instead of accuracy, and a calibrated threshold. Spatial separation "
+        "(spatial CV, v3) will further reduce the effective positives.\n",
+        "> **Leakage note (critical):** the `tiene_d1` label is defined as "
+        "`n_d1_300m >= 1`. Therefore the features derived from D1's location "
+        f"(`{'`, `'.join(D1_DERIVED_COLS)}`) are direct functions of the label and "
+        "**must NOT be used as predictors** in the look-alike model (target leakage): "
+        "their high correlation with `tiene_d1` is tautological, not informative. The model "
+        "should learn from the competitor, complementary, road network and "
+        "demographic features. This is independent of the spatial autocorrelation leakage, "
+        "which is addressed with spatial CV in v3.\n",
+        "> **Competition note (non-D1):** `n_supermercados_500m` and "
+        "`dist_supermercado_km` measure only competitors **other than D1** "
+        "(`es_d1 = 0`). Including D1 would introduce leakage: every positive would have a "
+        "'supermarket' (D1 itself) at <=300m. See docs/metodologia.md §6.\n",
+        f"> **Residual correlation `dist_supermercado_km` <-> `dist_d1_km`**: "
+        f"**{resid_corr:.4f}**. Interpreted as genuine co-location (areas with "
+        "dense commerce tend to have both D1 and other supermarkets nearby), not "
+        "as leakage: D1 was already excluded from `dist_supermercado_km` (previous note). "
+        "See docs/metodologia.md §6.1.\n",
+        "## Descriptive statistics per feature\n",
         desc.round(4).to_markdown(),
-        "\n## Correlacion de cada feature con `tiene_d1`\n",
+        "\n## Correlation of each feature with `tiene_d1`\n",
         corr.round(4).sort_values(ascending=False).to_frame("corr_con_tiene_d1").to_markdown(),
     ]
     lines += _demografia_section(df, n_total)
     config.FEATURES_SUMMARY_PATH.write_text("\n".join(lines), encoding="utf-8")
-    logger.info("Resumen escrito -> %s", config.FEATURES_SUMMARY_PATH.name)
+    logger.info("Summary written -> %s", config.FEATURES_SUMMARY_PATH.name)
 
 
 # --------------------------------------------------------------------------- #
-# Orquestacion
+# Orchestration
 # --------------------------------------------------------------------------- #
 def main() -> None:
     config.DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
     engine = get_engine()
     try:
         if not _table_exists(engine, config.TABLES["grid"]):
-            raise RuntimeError("Tabla 'grid' ausente. Corre 'uv run python -m src.data.db' primero.")
+            raise RuntimeError("Table 'grid' missing. Run 'uv run python -m src.data.db' first.")
 
         sql = build_features_sql(engine)
-        logger.info("Ejecutando query espacial de features...")
+        logger.info("Running spatial features query...")
         df = pd.read_sql(text(sql), engine)
-        logger.info("Features calculadas para %d hexagonos", len(df))
+        logger.info("Features computed for %d hexagons", len(df))
 
-        # Etiqueta look-alike
+        # Look-alike label
         df["tiene_d1"] = (df["n_d1_300m"] >= 1).astype(int)
 
-        # Asegurar dtype numerico en columnas demograficas (object->float si todo NULL)
+        # Ensure numeric dtype on demographic columns (object->float if all NULL)
         for col in CENSO_FEATURE_COLS:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
         df.to_parquet(config.FEATURES_PARQUET_PATH, index=False)
         df.to_csv(config.FEATURES_CSV_PATH, index=False)
-        logger.info("Guardado -> %s (+ .csv)", config.FEATURES_PARQUET_PATH.name)
+        logger.info("Saved -> %s (+ .csv)", config.FEATURES_PARQUET_PATH.name)
 
         write_summary(df)
-        logger.info("ETAPA 4 completa.")
+        logger.info("STAGE 4 complete.")
     finally:
         engine.dispose()
 

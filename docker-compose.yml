@@ -1,10 +1,10 @@
-# PostGIS dedicado para Site Selection Engine.
+# Dedicated PostGIS for Site Selection Engine.
 #
-# NOTA de puerto: el puerto host 5432 ya esta ocupado por el contenedor del
-# proyecto EUDR (eudr_postgis). Para no colisionar, este servicio expone PostGIS
-# en el puerto host 5433 -> 5432 del contenedor. La DATABASE_URL por defecto en
-# src/config.py apunta a 5433 en consecuencia. Override con la variable de
-# entorno DATABASE_URL si se desea otro destino.
+# PORT NOTE: host port 5432 is already taken by the EUDR project's container
+# (eudr_postgis). To avoid a collision, this service exposes PostGIS on host
+# port 5433 -> container 5432. The default DATABASE_URL in src/config.py
+# points to 5433 accordingly. Override with the DATABASE_URL environment
+# variable if you want a different target.
 services:
   postgis:
     image: postgis/postgis:16-3.4
