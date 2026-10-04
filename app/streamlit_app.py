@@ -170,7 +170,7 @@ with st.sidebar:
                         ["rank", "h3_index", "score", "lat_centroid", "lon_centroid"]]
             .sort_values("rank")
         )
-        st.dataframe(alts, width="stretch", hide_index=True)
+        st.dataframe(alts, use_container_width=True, hide_index=True)
     st.caption(f"Source: local parquet · {n_total} hexagons · {n_stores} D1 stores")
 
 # --------------------------------------------------------------------------- #
@@ -228,7 +228,7 @@ with col_map:
         map_style="road",
         tooltip=tooltip,
     )
-    st.pydeck_chart(deck, width="stretch")
+    st.pydeck_chart(deck, use_container_width=True)
     st.caption(
         "🔴 #1 recommendation   🔵 Current D1 stores "
         f"({n_stores})   ░ Low score → High score ░"
