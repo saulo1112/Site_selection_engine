@@ -24,6 +24,7 @@ jobs:
           mkdir -p _site/app _site/src _site/data/processed _site/data/raw
           cp web/index.html _site/
           touch _site/.nojekyll
+          sed -i -E 's#(\{ url: "\./[^"]+)"#\1?v=${{ github.sha }}"#' _site/index.html
           cp app/streamlit_app.py _site/app/
           cp src/__init__.py src/config.py _site/src/
           cp data/processed/lookalike_v3_ranking.parquet data/processed/features.parquet _site/data/processed/
