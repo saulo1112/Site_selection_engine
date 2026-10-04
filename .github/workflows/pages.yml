@@ -1,0 +1,43 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble static site (stlite)
+        run: |
+          mkdir -p _site/app _site/src _site/data/processed _site/data/raw
+          cp web/index.html _site/
+          touch _site/.nojekyll
+          cp app/streamlit_app.py _site/app/
+          cp src/__init__.py src/config.py _site/src/
+          cp data/processed/lookalike_v3_ranking.parquet data/processed/features.parquet _site/data/processed/
+          cp data/raw/pois_d1.geojson _site/data/raw/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

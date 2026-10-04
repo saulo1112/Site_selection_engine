@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Site Selection Engine - D1 Bogota</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/browser@0.85.1/build/stlite.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@0.85.1/build/stlite.js";
+
+      // Streamlit runs entirely in the browser (Pyodide). Files are fetched from
+      // this same site, preserving the repo layout the app expects.
+      mount(
+        {
+          requirements: ["pandas", "pyarrow", "pydeck"],
+          entrypoint: "app/streamlit_app.py",
+          files: {
+            "app/streamlit_app.py": { url: "./app/streamlit_app.py" },
+            "src/__init__.py": { url: "./src/__init__.py" },
+            "src/config.py": { url: "./src/config.py" },
+            "data/processed/lookalike_v3_ranking.parquet": { url: "./data/processed/lookalike_v3_ranking.parquet" },
+            "data/processed/features.parquet": { url: "./data/processed/features.parquet" },
+            "data/raw/pois_d1.geojson": { url: "./data/raw/pois_d1.geojson" },
+          },
+          streamlitConfig: {
+            "theme.base": "light",
+            "theme.primaryColor": "#e23b3b",
+            "client.toolbarMode": "viewer",
+          },
+        },
+        document.getElementById("root")
+      );
+    </script>
+  </body>
+</html>
